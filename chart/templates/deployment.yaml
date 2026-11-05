@@ -26,7 +26,10 @@ metadata:
     {{- include "vaultwarden.labels" $r | nindent 4 }}
   {{- include "vaultwarden.annotations" (dict "root" $r "extra" dict) | nindent 2 }}
 spec:
-  {{- if $isServer }}
+  {{- if include "vaultwarden.restoring" $r }}
+  # Restore mode (backup.files.restore.enabled): stopped while the restore Job runs.
+  replicas: 0
+  {{- else if $isServer }}
   {{- if not (and $r.Values.autoscaling.enabled (include "vaultwarden.multiPod" $r)) }}
   replicas: {{ $replicas }}
   {{- end }}

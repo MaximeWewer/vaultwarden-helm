@@ -171,15 +171,16 @@ backup:
 ### Restore: files
 
 ```sh
-kubectl scale deploy/vaultwarden -n vaultwarden --replicas=0
+# 1. Restore mode: the chart scales vaultwarden (server + scheduler) to 0 and runs the
+#    restore Job, which waits until vaultwarden no longer answers before writing.
 helm upgrade vaultwarden ... --reuse-values --set backup.files.restore.enabled=true \
   --set backup.files.restore.snapshot=latest     # or a restic snapshot id
 kubectl wait --for=condition=complete job -l app.kubernetes.io/component=restore -n vaultwarden
+# 2. Back to normal: vaultwarden restarts on the restored data.
 helm upgrade vaultwarden ... --reuse-values --set backup.files.restore.enabled=false
-kubectl scale deploy/vaultwarden -n vaultwarden --replicas=3
 ```
 
-The Job restores into the data PVC, or back into the bucket in `s3` mode. Its name hashes its spec, so changing it re-runs the restore.
+Do not scale the Deployment by hand instead: a `helm upgrade` re-applies `replicas` and would restart vaultwarden while the Job overwrites its data. The Job restores into the data PVC (sqlite: the consistent DB copy taken at backup time), or back into the bucket in `s3` mode. Its name hashes its spec, so changing the snapshot re-runs the restore.
 
 ## Extending the chart
 

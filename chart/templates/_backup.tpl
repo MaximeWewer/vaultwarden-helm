@@ -161,6 +161,11 @@ template:
         command: ["/bin/sh", "-ec"]
         args:
           - |
+            # Restore mode scales vaultwarden to 0: wait until it no longer answers, so
+            # no pod still holds the data (sqlite file, attachments) while we overwrite it.
+            until ! wget -q -T 3 -O /dev/null http://{{ include "vaultwarden.fullname" . }}:{{ .Values.service.port }}/alive; do
+              echo "waiting for vaultwarden to stop"; sleep 3
+            done
             SNAP={{ $f.restore.snapshot | quote }}
             if [ "$SNAP" = "latest" ]; then SNAP="latest --host $RESTIC_HOST"; fi
             # Snapshots store absolute /data/... paths: restore to /restore/data.

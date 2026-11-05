@@ -336,9 +336,10 @@ backup:
     successfulJobsHistoryLimit: 3
     failedJobsHistoryLimit: 3
     backoffLimit: 2
-    # One-shot restore Job (rendered while enabled; its name hashes the snapshot so
-    # changing it re-runs). Restores into the data PVC, or back into the bucket
-    # (storage.mode=s3). Scale vaultwarden to 0 first for a consistent restore.
+    # Restore mode: while enabled, the chart scales vaultwarden to 0 and runs a
+    # one-shot restore Job (its name hashes its spec, so changing the snapshot re-runs
+    # it). Restores into the data PVC, or back into the bucket (storage.mode=s3).
+    # Set back to false once the Job is complete to restart vaultwarden.
     restore:
       enabled: false
       # restic snapshot id, or "latest" (latest of this release's host).

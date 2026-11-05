@@ -1,4 +1,10 @@
 Vaultwarden deployed: {{ include "vaultwarden.fullname" . }} ({{ include "vaultwarden.appImage" . }})
+{{- if include "vaultwarden.restoring" . }}
+
+RESTORE MODE: vaultwarden is scaled to 0 while the restore Job runs.
+  kubectl wait --for=condition=complete job -l app.kubernetes.io/component=restore -n {{ .Release.Namespace }}
+  then upgrade with backup.files.restore.enabled=false to restart vaultwarden.
+{{- end }}
 
 Topology:
   - replicas : {{ if and .Values.autoscaling.enabled (include "vaultwarden.multiPod" .) }}HPA {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ include "vaultwarden.replicas" . }}{{ end }}{{ if and (gt (int .Values.replicas) 1) (eq (include "vaultwarden.replicas" .) "1") }} (forced to 1: storage.mode={{ .Values.storage.mode }} / database.type={{ .Values.database.type }}){{ end }}

@@ -340,3 +340,9 @@ true
     cidr: ::/0
 - namespaceSelector: {}
 {{- end }}
+
+{{/* Restore mode: backup.files.restore.enabled. Vaultwarden is scaled to 0 (by the
+     chart itself, so a `helm upgrade` cannot bring it back mid-restore). */}}
+{{- define "vaultwarden.restoring" -}}
+{{- if and .Values.backup.files.enabled .Values.backup.files.restore.enabled -}}true{{- end -}}
+{{- end }}
