@@ -61,10 +61,14 @@ spec:
         {{- with $r.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $r.Values.podAnnotations }}
       annotations:
+        # Rolls the pods when an inline secret value changes. Secrets from
+        # config.existingSecret / generated ones are not tracked: use Reloader
+        # (podAnnotations: reloader.stakater.com/auto: "true").
+        checksum/inline-secrets: {{ include "vaultwarden.inlineSecretsChecksum" $r }}
+        {{- with $r.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "vaultwarden.serviceAccountName" $r }}
       automountServiceAccountToken: {{ $r.Values.serviceAccount.automountServiceAccountToken }}

@@ -234,6 +234,7 @@ extraObjects:
 
 - Pods run as uid `1000`, `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: [ALL]`, `seccompProfile: RuntimeDefault`, no ServiceAccount token, no service links. Same for every Job/CronJob.
 - NetworkPolicy (on by default, server + scheduler pods): ingress on the web port only (`networkPolicy.allowedFrom`). Egress derived from the configuration: DNS, in-namespace CNPG (5432) / RustFS (9000) when used, the external DB port (`externalDatabase.port`, restrict with `externalDatabase.networkPolicyPeers`), the S3 endpoint port (incl. the vault origin when RustFS is routed through the ingress), the SMTP port, HTTPS out for icons / push relay / SSO (`networkPolicy.allowInternetHttps`), plus `networkPolicy.extraEgress`.
+- Config changes roll the pods (env is in the pod spec; inline `config.secrets.*` via a `checksum/inline-secrets` annotation). Changes to `config.existingSecret` or other referenced Secrets are not tracked: use [Reloader](https://github.com/stakater/Reloader) (`podAnnotations: { reloader.stakater.com/auto: "true" }`).
 - `/admin` disabled unless `config.admin.enabled`; sign-ups closed by default.
 - `rsa-private-key`, restic password and RustFS credentials Secrets carry `helm.sh/resource-policy: keep`.
 

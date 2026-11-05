@@ -319,6 +319,12 @@ true
 {{- if and .Values.scheduler.enabled (include "vaultwarden.multiPod" .) -}}true{{- end -}}
 {{- end }}
 
+{{/* Checksum of the secret material set inline in values (rolls the pods on change). */}}
+{{- define "vaultwarden.inlineSecretsChecksum" -}}
+{{- $s := dict "config" .Values.config.secrets "db" .Values.externalDatabase.url "s3" (list .Values.storage.s3.accessKeyId .Values.storage.s3.secretAccessKey) -}}
+{{- toJson $s | sha256sum | trunc 16 -}}
+{{- end }}
+
 {{/* Port of a URL origin: explicit :port, else 443 (https) / 80 (http). */}}
 {{- define "vaultwarden.urlPort" -}}
 {{- $p := regexFind ":[0-9]+$" (regexFind "^[a-z]+://[^/]+" .) | trimPrefix ":" -}}
