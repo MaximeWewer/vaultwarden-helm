@@ -4,10 +4,13 @@ description: "Vaultwarden (Bitwarden-compatible server): hardened, HA-capable He
 type: application
 version: 1.37.5-05-11-2026
 appVersion: "1.37.5"
-home: https://github.com/dani-garcia/vaultwarden
+# helm push maps home -> org.opencontainers.image.url and sources[0] ->
+# org.opencontainers.image.source, which GHCR uses to link the package to a repo:
+# keep this repository first.
+home: https://github.com/MaximeWewer/vaultwarden-helm
 sources:
-  - https://github.com/dani-garcia/vaultwarden
   - https://github.com/MaximeWewer/vaultwarden-helm
+  - https://github.com/dani-garcia/vaultwarden
 keywords:
   - vaultwarden
   - bitwarden
