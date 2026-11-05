@@ -178,7 +178,7 @@ helm upgrade vaultwarden ... --reuse-values --set backup.files.restore.enabled=f
 kubectl scale deploy/vaultwarden -n vaultwarden --replicas=3
 ```
 
-The Job restores into the data PVC, or back into the bucket in `s3` mode. Its name hashes the snapshot, so changing it re-runs the restore.
+The Job restores into the data PVC, or back into the bucket in `s3` mode. Its name hashes its spec, so changing it re-runs the restore.
 
 ## Extending the chart
 
