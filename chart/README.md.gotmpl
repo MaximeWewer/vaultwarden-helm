@@ -232,7 +232,7 @@ extraObjects:
 ## Security
 
 - Pods run as uid `1000`, `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: [ALL]`, `seccompProfile: RuntimeDefault`, no ServiceAccount token, no service links. Same for every Job/CronJob.
-- NetworkPolicy (on by default): ingress on the web port only (`networkPolicy.allowedFrom`); egress DNS, in-namespace PostgreSQL/RustFS, HTTPS out (icons, push relay, SSO, S3: `networkPolicy.allowInternetHttps`), SMTP port when configured, plus `networkPolicy.extraEgress`.
+- NetworkPolicy (on by default): ingress on the web port only (`networkPolicy.allowedFrom`). Egress derived from the configuration: DNS, in-namespace CNPG (5432) / RustFS (9000) when used, the external DB port (`externalDatabase.port`, restrict with `externalDatabase.networkPolicyPeers`), the S3 endpoint port (incl. the vault origin when RustFS is routed through the ingress), the SMTP port, HTTPS out for icons / push relay / SSO (`networkPolicy.allowInternetHttps`), plus `networkPolicy.extraEgress`.
 - `/admin` disabled unless `config.admin.enabled`; sign-ups closed by default.
 - `rsa-private-key`, restic password and RustFS credentials Secrets carry `helm.sh/resource-policy: keep`.
 

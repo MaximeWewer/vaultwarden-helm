@@ -36,31 +36,52 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # In-namespace deps: CNPG (5432), RustFS (9000).
+    {{- if or (eq .Values.database.type "cnpg") .Values.rustfs.enabled }}
+    # In-namespace deps:{{ if eq .Values.database.type "cnpg" }} CNPG (5432){{ end }}{{ if .Values.rustfs.enabled }} RustFS (9000){{ end }}.
     - to:
         - podSelector: {}
       ports:
+        {{- if eq .Values.database.type "cnpg" }}
         - protocol: TCP
           port: 5432
+        {{- end }}
+        {{- if .Values.rustfs.enabled }}
         - protocol: TCP
           port: 9000
-    {{- if .Values.networkPolicy.allowInternetHttps }}
-    # Icons, push relay, SSO IdP, external S3: HTTPS to anything (SMTP below).
+        {{- end }}
+    {{- end }}
+    {{- if eq .Values.database.type "external" }}
+    # External database (externalDatabase.port), in or out of the cluster.
     - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-        - ipBlock:
-            cidr: ::/0
+        {{- with .Values.externalDatabase.networkPolicyPeers }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.externalDatabase.port }}
+    {{- end }}
+    {{- if eq .Values.storage.mode "s3" }}
+    {{- $ep := include "vaultwarden.s3.endpoint" . | default "https://s3.amazonaws.com" }}
+    # S3 endpoint {{ $ep }}{{ if include "vaultwarden.rustfs.routed" . }} (vault origin: hairpin through the ingress to RustFS){{ end }}.
+    - to:
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "vaultwarden.urlPort" $ep }}
+    {{- end }}
+    {{- if .Values.networkPolicy.allowInternetHttps }}
+    # Icons, push relay, SSO IdP: HTTPS to anything (SMTP below).
+    - to:
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
       ports:
         - protocol: TCP
           port: 443
     {{- end }}
     {{- if .Values.config.smtp.host }}
     - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-        - ipBlock:
-            cidr: ::/0
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
       ports:
         - protocol: TCP
           port: {{ .Values.config.smtp.port }}

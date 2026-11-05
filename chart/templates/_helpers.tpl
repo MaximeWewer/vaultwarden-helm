@@ -313,3 +313,19 @@ true
 {{- end -}}
 {{- $v -}}
 {{- end -}}
+
+{{/* Port of a URL origin: explicit :port, else 443 (https) / 80 (http). */}}
+{{- define "vaultwarden.urlPort" -}}
+{{- $p := regexFind ":[0-9]+$" (regexFind "^[a-z]+://[^/]+" .) | trimPrefix ":" -}}
+{{- if $p -}}{{ $p }}{{- else if hasPrefix "http://" . -}}80{{- else -}}443{{- end -}}
+{{- end }}
+
+{{/* NetworkPolicy peers "anywhere": external IPs (v4/v6) and in-cluster pods (some
+     CNIs, e.g. Cilium, do not match pod IPs with an ipBlock 0.0.0.0/0). */}}
+{{- define "vaultwarden.netpol.anywhere" -}}
+- ipBlock:
+    cidr: 0.0.0.0/0
+- ipBlock:
+    cidr: ::/0
+- namespaceSelector: {}
+{{- end }}

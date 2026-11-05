@@ -179,6 +179,10 @@ cnpg:
 ## postgresql://user:pass@host:5432/vaultwarden?sslmode=require
 externalDatabase:
   url: ""
+  # Port opened in the NetworkPolicy egress (5432 PostgreSQL, 3306 MySQL/MariaDB).
+  port: 5432
+  # Restrict that egress rule (NetworkPolicy peers). Empty = anywhere.
+  networkPolicyPeers: []
   existingSecret: ""
   existingSecretKey: "database-url"
 
@@ -506,9 +510,10 @@ networkPolicy:
   #  - namespaceSelector:
   #      matchLabels:
   #        kubernetes.io/metadata.name: ingress-nginx
-  # Vaultwarden fetches website icons, sends mail, talks to the push relay / SSO IdP /
-  # external S3+DB: open them here. Default allows HTTPS egress to anything outside
-  # the cluster pod network (set false to lock down and list destinations instead).
+  # Egress opened automatically: DNS, CNPG / RustFS in-namespace, the external DB
+  # port (externalDatabase.port), the S3 endpoint port, the SMTP port. Icons, push
+  # relay and SSO IdP need HTTPS out: allowInternetHttps (set false to lock down and
+  # list destinations in extraEgress instead).
   allowInternetHttps: true
   extraEgress: []
 
