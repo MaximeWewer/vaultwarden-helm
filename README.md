@@ -11,7 +11,6 @@ Production-grade Helm chart for [Vaultwarden](https://github.com/dani-garcia/vau
 - **Hardened**: non-root, read-only root filesystem, `drop: [ALL]`, NetworkPolicy, no ServiceAccount token, generate-once secrets kept on uninstall
 - **Fail-fast**: unsafe value combinations are rejected at render time
 - **S3-enabled image**: the upstream image ships without the `s3` feature; `build-image` publishes `ghcr.io/maximewewer/vaultwarden-s3` (Alpine, tag `<appVersion>-alpine`, always the chart `appVersion`) from the unmodified upstream sources
-- Automated weekly version updates tracking upstream releases
 
 ## Prerequisites
 
