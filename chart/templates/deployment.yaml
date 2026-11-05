@@ -1,21 +1,41 @@
 {{- include "vaultwarden.validate" . -}}
-{{- $mode := .Values.storage.mode }}
-{{- $replicas := int (include "vaultwarden.replicas" .) }}
+{{- /*
+  One pod template, two Deployments:
+    server    : the replicas behind the Service. With a scheduler, their job
+                scheduler is off (JOB_POLL_INTERVAL_MS=0).
+    scheduler : single pod, no traffic (not selected by the Service), the only one
+                running the scheduled jobs (purges, 2FA / emergency-access mails),
+                so a multi-replica install does not send every mail N times.
+*/ -}}
+{{- $components := list "server" }}
+{{- if include "vaultwarden.scheduler.enabled" . }}
+{{- $components = append $components "scheduler" }}
+{{- end }}
+{{- range $component := $components }}
+{{- $r := $ }}
+{{- $isServer := eq $component "server" }}
+{{- $mode := $r.Values.storage.mode }}
+{{- $replicas := int (include "vaultwarden.replicas" $r) }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "vaultwarden.fullname" . }}
+  name: {{ $isServer | ternary (include "vaultwarden.fullname" $r) (printf "%s-scheduler" (include "vaultwarden.fullname" $r)) }}
   labels:
-    app.kubernetes.io/component: server
-    {{- include "vaultwarden.labels" . | nindent 4 }}
-  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+    app.kubernetes.io/component: {{ $component }}
+    {{- include "vaultwarden.labels" $r | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" $r "extra" dict) | nindent 2 }}
 spec:
-  {{- if not (and .Values.autoscaling.enabled (include "vaultwarden.multiPod" .)) }}
+  {{- if $isServer }}
+  {{- if not (and $r.Values.autoscaling.enabled (include "vaultwarden.multiPod" $r)) }}
   replicas: {{ $replicas }}
   {{- end }}
+  {{- else }}
+  replicas: 1
+  {{- end }}
   revisionHistoryLimit: 5
-  {{- if or (eq $mode "rwo") (eq .Values.database.type "sqlite") }}
-  # Single writer on a RWO volume / sqlite file: never two pods at once.
+  {{- if or (not $isServer) (eq $mode "rwo") (eq $r.Values.database.type "sqlite") }}
+  # Single writer (RWO volume / sqlite file) or single scheduler: never two pods at once.
   strategy:
     type: Recreate
   {{- else }}
@@ -28,63 +48,63 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      app.kubernetes.io/component: server
-      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+      {{- include "vaultwarden.selectorLabels" $r | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/component: server
-        {{- include "vaultwarden.selectorLabels" . | nindent 8 }}
-        {{- with .Values.commonLabels }}
+        app.kubernetes.io/component: {{ $component }}
+        {{- include "vaultwarden.selectorLabels" $r | nindent 8 }}
+        {{- with $r.Values.commonLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- with .Values.podLabels }}
+        {{- with $r.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- with $r.Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "vaultwarden.serviceAccountName" . }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      serviceAccountName: {{ include "vaultwarden.serviceAccountName" $r }}
+      automountServiceAccountToken: {{ $r.Values.serviceAccount.automountServiceAccountToken }}
       enableServiceLinks: false
-      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
-      {{- with .Values.priorityClassName }}
+      terminationGracePeriodSeconds: {{ $r.Values.terminationGracePeriodSeconds }}
+      {{- with $r.Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
-      {{- with .Values.dnsPolicy }}
+      {{- with $r.Values.dnsPolicy }}
       dnsPolicy: {{ . }}
       {{- end }}
-      {{- with .Values.dnsConfig }}
+      {{- with $r.Values.dnsConfig }}
       dnsConfig:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.imagePullSecrets }}
+      {{- with $r.Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- $waitS3 := and (eq $mode "s3") .Values.storage.s3.waitForBucket }}
-      {{- if or $waitS3 .Values.extraInitContainers }}
+        {{- toYaml $r.Values.podSecurityContext | nindent 8 }}
+      {{- $waitS3 := and (eq $mode "s3") $r.Values.storage.s3.waitForBucket }}
+      {{- if or $waitS3 $r.Values.extraInitContainers }}
       initContainers:
       {{- if $waitS3 }}
         # Block until the bucket answers: vaultwarden reads S3 objects (config.json)
         # at startup and silently skips them when S3 is not reachable yet.
         - name: wait-for-s3
-          image: {{ include "vaultwarden.image" (dict "img" .Values.backup.files.rclone.image "root" .) | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "vaultwarden.image" (dict "img" $r.Values.backup.files.rclone.image "root" $r) | quote }}
+          imagePullPolicy: {{ $r.Values.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           args:
             - |
-              until rclone lsf {{ printf "vw:%s" .Values.storage.s3.bucket | quote }} --max-depth 1 >/dev/null 2>&1; do
-                echo "waiting for S3 bucket {{ .Values.storage.s3.bucket }}"; sleep 5
+              until rclone lsf {{ printf "vw:%s" $r.Values.storage.s3.bucket | quote }} --max-depth 1 >/dev/null 2>&1; do
+                echo "waiting for S3 bucket {{ $r.Values.storage.s3.bucket }}"; sleep 5
               done
           env:
-            {{- include "vaultwarden.rclone.env" . | nindent 12 }}
+            {{- include "vaultwarden.rclone.env" $r | nindent 12 }}
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- toYaml $r.Values.containerSecurityContext | nindent 12 }}
           resources:
             requests:
               cpu: 10m
@@ -95,42 +115,47 @@ spec:
             - name: tmp
               mountPath: /tmp
       {{- end }}
-      {{- with .Values.extraInitContainers }}
-        {{- include "vaultwarden.tplValue" (dict "value" . "root" $) | nindent 8 }}
+      {{- with $r.Values.extraInitContainers }}
+        {{- include "vaultwarden.tplValue" (dict "value" . "root" $r) | nindent 8 }}
       {{- end }}
       {{- end }}
       containers:
         - name: vaultwarden
-          image: {{ include "vaultwarden.appImage" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "vaultwarden.appImage" $r | quote }}
+          imagePullPolicy: {{ $r.Values.image.pullPolicy }}
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- toYaml $r.Values.containerSecurityContext | nindent 12 }}
           env:
-            {{- include "vaultwarden.env" . | nindent 12 }}
-          {{- with .Values.config.extraEnvFrom }}
+            {{- if and $isServer (include "vaultwarden.scheduler.enabled" $r) }}
+            # Scheduled jobs run in the dedicated scheduler pod only.
+            - name: JOB_POLL_INTERVAL_MS
+              value: "0"
+            {{- end }}
+            {{- include "vaultwarden.env" $r | nindent 12 }}
+          {{- with $r.Values.config.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - name: http
-              containerPort: {{ .Values.containerPort }}
+              containerPort: {{ $r.Values.containerPort }}
               protocol: TCP
           # Defaults in values.yaml (probes.*): readiness on /alive (also checks the DB),
           # liveness TCP only so a DB outage does not restart every pod.
-          {{- with .Values.probes.startup }}
+          {{- with $r.Values.probes.startup }}
           startupProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.probes.readiness }}
+          {{- with $r.Values.probes.readiness }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.probes.liveness }}
+          {{- with $r.Values.probes.liveness }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml ($isServer | ternary $r.Values.resources $r.Values.scheduler.resources) | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /data
@@ -140,11 +165,11 @@ spec:
             # Rocket/Diesel scratch (read-only root filesystem).
             - name: tmp
               mountPath: /tmp
-            {{- with .Values.extraVolumeMounts }}
-            {{- include "vaultwarden.tplValue" (dict "value" . "root" $) | nindent 12 }}
+            {{- with $r.Values.extraVolumeMounts }}
+            {{- include "vaultwarden.tplValue" (dict "value" . "root" $r) | nindent 12 }}
             {{- end }}
-        {{- with .Values.sidecars }}
-        {{- include "vaultwarden.tplValue" (dict "value" . "root" $) | nindent 8 }}
+        {{- with $r.Values.sidecars }}
+        {{- include "vaultwarden.tplValue" (dict "value" . "root" $r) | nindent 8 }}
         {{- end }}
       volumes:
         - name: data
@@ -153,11 +178,11 @@ spec:
           emptyDir: {}
           {{- else }}
           persistentVolumeClaim:
-            claimName: {{ include "vaultwarden.pvcName" . }}
+            claimName: {{ include "vaultwarden.pvcName" $r }}
           {{- end }}
         - name: rsa-key
           secret:
-            secretName: {{ include "vaultwarden.secretName" . }}
+            secretName: {{ include "vaultwarden.secretName" $r }}
             defaultMode: 0440
             items:
               - key: rsa-private-key
@@ -165,35 +190,36 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 512Mi
-        {{- with .Values.extraVolumes }}
-        {{- include "vaultwarden.tplValue" (dict "value" . "root" $) | nindent 8 }}
+        {{- with $r.Values.extraVolumes }}
+        {{- include "vaultwarden.tplValue" (dict "value" . "root" $r) | nindent 8 }}
         {{- end }}
-      {{- if and .Values.topologySpread.enabled (include "vaultwarden.multiPod" .) }}
+      {{- if and $isServer $r.Values.topologySpread.enabled (include "vaultwarden.multiPod" $r) }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          whenUnsatisfiable: {{ $r.Values.topologySpread.whenUnsatisfiable }}
           labelSelector:
             matchLabels:
               app.kubernetes.io/component: server
-              {{- include "vaultwarden.selectorLabels" . | nindent 14 }}
+              {{- include "vaultwarden.selectorLabels" $r | nindent 14 }}
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
               app.kubernetes.io/component: server
-              {{- include "vaultwarden.selectorLabels" . | nindent 14 }}
+              {{- include "vaultwarden.selectorLabels" $r | nindent 14 }}
       {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- with $r.Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with $r.Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- with $r.Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}

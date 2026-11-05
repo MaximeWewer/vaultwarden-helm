@@ -314,6 +314,11 @@ true
 {{- $v -}}
 {{- end -}}
 
+{{/* Dedicated scheduler Deployment: only when several server pods can run. */}}
+{{- define "vaultwarden.scheduler.enabled" -}}
+{{- if and .Values.scheduler.enabled (include "vaultwarden.multiPod" .) -}}true{{- end -}}
+{{- end }}
+
 {{/* Port of a URL origin: explicit :port, else 443 (https) / 80 (http). */}}
 {{- define "vaultwarden.urlPort" -}}
 {{- $p := regexFind ":[0-9]+$" (regexFind "^[a-z]+://[^/]+" .) | trimPrefix ":" -}}

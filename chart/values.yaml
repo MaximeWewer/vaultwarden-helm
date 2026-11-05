@@ -34,7 +34,8 @@ imagePullSecrets: []
 ##     config.push for mobile.
 ##   - Login/admin rate limits are per pod (effective limit x replicas).
 ##   - The admin panel writes config.json per pod: drive config through values/env.
-##   - Scheduled jobs (purges) run on every pod; they are idempotent DB deletes.
+##   - Scheduled jobs (purges, 2FA / emergency-access mails) run in a dedicated
+##     single scheduler pod (see `scheduler`), not on every replica.
 replicas: 3
 
 ## Vaultwarden application config (env vars). Every other upstream variable can be
@@ -475,6 +476,19 @@ extraObjects: []
 #      target: { name: vaultwarden-secret }
 #      dataFrom:
 #        - extract: { key: vaultwarden }
+
+## Dedicated scheduler pod (1 replica, receives no traffic). Rendered only when
+## several server pods can run: the server pods then get JOB_POLL_INTERVAL_MS=0 and
+## only this pod runs the scheduled jobs. Without it, every replica would run them
+## and send the incomplete-2FA / emergency-access mails once per replica.
+scheduler:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
 
 podDisruptionBudget:
   # Rendered only when the effective replica count is > 1.

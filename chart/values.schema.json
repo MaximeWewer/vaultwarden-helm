@@ -861,6 +861,17 @@
     },
     "extraObjects": {
       "type": "array"
+    },
+    "scheduler": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
     }
   }
 }

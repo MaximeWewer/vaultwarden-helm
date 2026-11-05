@@ -58,6 +58,10 @@ Multi-replica reminders:
   - Live-sync WebSockets are per pod: enable cookie stickiness on the ingress /
     gateway (see the ingress.annotations examples) and config.push for mobile clients.
   - Drive configuration through values/env: admin-panel changes are read at pod start.
+{{- if include "vaultwarden.scheduler.enabled" . }}
+  - Scheduled jobs (purges, 2FA / emergency-access mails) run only in
+    deploy/{{ include "vaultwarden.fullname" . }}-scheduler (1 pod, no traffic).
+{{- end }}
 {{- end }}
 {{- if not .Values.config.signupsAllowed }}
 

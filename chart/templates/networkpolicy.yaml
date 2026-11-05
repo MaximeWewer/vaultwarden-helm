@@ -8,11 +8,14 @@ metadata:
     {{- include "vaultwarden.labels" . | nindent 4 }}
   {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
 spec:
-  # Vaultwarden pods only (CNPG / RustFS manage their own pods).
+  # Vaultwarden pods only: server + scheduler (CNPG / RustFS manage their own pods).
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: server
       {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [server, scheduler]
   policyTypes:
     - Ingress
     - Egress
