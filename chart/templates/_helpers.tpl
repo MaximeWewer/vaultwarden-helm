@@ -341,6 +341,16 @@ true
 - namespaceSelector: {}
 {{- end }}
 
+{{/* NetworkPolicy peers "internet": external IPs only, no in-cluster pods. Used for
+     the HTTPS-out (icons, push relay, SSO) and SMTP rules, so opening them does not
+     open those ports to every pod of the cluster. */}}
+{{- define "vaultwarden.netpol.internet" -}}
+- ipBlock:
+    cidr: 0.0.0.0/0
+- ipBlock:
+    cidr: ::/0
+{{- end }}
+
 {{/* Restore mode: backup.files.restore.enabled. Vaultwarden is scaled to 0 (by the
      chart itself, so a `helm upgrade` cannot bring it back mid-restore). */}}
 {{- define "vaultwarden.restoring" -}}

@@ -54,7 +54,9 @@ spec:
         {{- end }}
     {{- end }}
     {{- if eq .Values.database.type "external" }}
-    # External database (externalDatabase.port), in or out of the cluster.
+    # External database (externalDatabase.port), in or out of the cluster: peers
+    # include every namespace (in-cluster DBs; Cilium does not match pod IPs with
+    # ipBlock). Narrow it with externalDatabase.networkPolicyPeers.
     - to:
         {{- with .Values.externalDatabase.networkPolicyPeers }}
         {{- toYaml . | nindent 8 }}
@@ -75,16 +77,16 @@ spec:
           port: {{ include "vaultwarden.urlPort" $ep }}
     {{- end }}
     {{- if .Values.networkPolicy.allowInternetHttps }}
-    # Icons, push relay, SSO IdP: HTTPS to anything (SMTP below).
+    # Icons, push relay, SSO IdP: HTTPS to external IPs only (SMTP below, same peers).
     - to:
-        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+        {{- include "vaultwarden.netpol.internet" . | nindent 8 }}
       ports:
         - protocol: TCP
           port: 443
     {{- end }}
     {{- if .Values.config.smtp.host }}
     - to:
-        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+        {{- include "vaultwarden.netpol.internet" . | nindent 8 }}
       ports:
         - protocol: TCP
           port: {{ .Values.config.smtp.port }}

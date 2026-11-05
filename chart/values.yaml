@@ -536,9 +536,12 @@ networkPolicy:
   #      matchLabels:
   #        kubernetes.io/metadata.name: ingress-nginx
   # Egress opened automatically: DNS, CNPG / RustFS in-namespace, the external DB
-  # port (externalDatabase.port), the S3 endpoint port, the SMTP port. Icons, push
-  # relay and SSO IdP need HTTPS out: allowInternetHttps (set false to lock down and
-  # list destinations in extraEgress instead).
+  # port (externalDatabase.port) and the S3 endpoint port (both towards external IPs
+  # AND every in-cluster pod: an in-cluster DB / ingress hairpin must stay reachable),
+  # the SMTP port (external IPs only). Icons, push relay and SSO IdP need HTTPS out:
+  # allowInternetHttps (external IPs only; set false to lock down and list
+  # destinations in extraEgress instead). With storage.mode=s3 on an https endpoint,
+  # port 443 stays open through the S3 rule even when allowInternetHttps=false.
   allowInternetHttps: true
   extraEgress: []
 
