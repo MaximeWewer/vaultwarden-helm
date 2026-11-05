@@ -25,12 +25,15 @@ Production-grade Helm chart for [Vaultwarden](https://github.com/dani-garcia/vau
 
 ```bash
 helm install vaultwarden oci://ghcr.io/maximewewer/charts/vaultwarden \
+  --version 1.37.5-05-11-2026 \
   --namespace vaultwarden --create-namespace \
   --set config.domain=https://vault.example.com \
   --set backup.s3.endpoint=https://s3.backup.example.com \
   --set backup.s3.bucket=vaultwarden-backups \
   --set backup.s3.existingSecret=vaultwarden-backup-s3
 ```
+
+Chart versions are `<vaultwarden version>-<DD-MM-YYYY>`, which semver reads as a pre-release: Helm only resolves them with an explicit `--version` (recommended, pin it), or `--devel` for the latest one.
 
 ### From source
 

@@ -106,6 +106,7 @@ Probes: readiness on `/alive` (also checks the DB, so a pod losing the DB leaves
 
 ```sh
 helm install vaultwarden oci://ghcr.io/maximewewer/charts/vaultwarden \
+  --version 1.37.5-05-11-2026 \
   -n vaultwarden --create-namespace \
   --set config.domain=https://vault.example.com \
   --set ingress.enabled=true --set ingress.className=nginx --set ingress.host=vault.example.com \
@@ -113,6 +114,8 @@ helm install vaultwarden oci://ghcr.io/maximewewer/charts/vaultwarden \
   --set backup.s3.bucket=vaultwarden-backups \
   --set backup.s3.existingSecret=vaultwarden-backup-s3
 ```
+
+Chart versions are `<vaultwarden version>-<DD-MM-YYYY>`, which semver reads as a pre-release: Helm only resolves them with an explicit `--version` (recommended, pin it), or `--devel` for the latest one.
 
 The chart **fails at render time** on unsafe combinations instead of deploying something broken: missing `config.domain`, `replicas > 1` with `rwo` or `sqlite`, S3 mode without credentials, backups enabled without a target, RustFS without S3 mode, colliding bucket names…
 
