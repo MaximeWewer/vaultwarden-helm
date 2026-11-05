@@ -55,8 +55,8 @@ Admin panel: {{ .Values.config.domain | trimSuffix "/" }}/admin
 {{- if include "vaultwarden.multiPod" . }}
 
 Multi-replica reminders:
-  - Live-sync WebSockets are per pod: keep sticky sessions (service.sessionAffinity,
-    ingress cookie affinity) and enable config.push for mobile clients.
+  - Live-sync WebSockets are per pod: enable cookie stickiness on the ingress /
+    gateway (see the ingress.annotations examples) and config.push for mobile clients.
   - Drive configuration through values/env: admin-panel changes are read at pod start.
 {{- end }}
 {{- if not .Values.config.signupsAllowed }}

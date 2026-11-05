@@ -29,8 +29,9 @@ imagePullSecrets: []
 ## (storage.mode=rwx|s3) and a network database (database.type=cnpg|external).
 ## Multi-replica caveats (upstream is single-process by design):
 ##   - WebSocket live-sync notifications are in-memory per pod: a client only gets
-##     pushes for changes handled by the pod it is connected to. Enable
-##     service.sessionAffinity / ingress stickiness, and config.push for mobile.
+##     pushes for changes handled by the pod it is connected to. Enable cookie
+##     stickiness on the ingress / gateway (see ingress.annotations), and
+##     config.push for mobile.
 ##   - Login/admin rate limits are per pod (effective limit x replicas).
 ##   - The admin panel writes config.json per pod: drive config through values/env.
 ##   - Scheduled jobs (purges) run on every pod; they are idempotent DB deletes.
@@ -355,17 +356,26 @@ service:
   type: ClusterIP
   port: 80
   annotations: {}
-  # ClientIP keeps a client on one pod (WebSocket notifications stay coherent).
-  sessionAffinity: ClientIP
+  # Service-level affinity. Left off on purpose: ingress controllers / gateways
+  # (ingress-nginx, Traefik, Envoy...) send traffic straight to the pod endpoints
+  # and ignore it, and a proxy that does go through the Service would pin all its
+  # traffic (one client IP) to a single pod. Use cookie stickiness on the
+  # ingress / gateway instead. ClientIP only helps clients hitting the Service
+  # directly (NodePort / LoadBalancer without a proxy).
+  sessionAffinity: None
   sessionAffinityTimeoutSeconds: 10800
 
 ingress:
   enabled: false
   className: ""
-  # Sticky sessions with replicas>1 (ingress-nginx example):
+  # Cookie stickiness with replicas>1 (keeps a client's WebSocket on the pod
+  # that handles its writes). ingress-nginx:
   #   nginx.ingress.kubernetes.io/affinity: cookie
   #   nginx.ingress.kubernetes.io/session-cookie-name: vw_affinity
   #   nginx.ingress.kubernetes.io/proxy-body-size: 525m
+  # Traefik: set on the Service instead (service.annotations):
+  #   traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+  #   traefik.ingress.kubernetes.io/service.sticky.cookie.name: vw_affinity
   annotations: {}
   host: vault.example.com
   tls: []

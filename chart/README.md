@@ -79,7 +79,7 @@ Vaultwarden is a single-process design; running several replicas works with a sh
 | Concern | Handling |
 |---------|----------|
 | JWT signing key (`rsa_key.pem`) must be identical on every pod | Generated once into the chart Secret (`rsa-private-key`), mounted read-only. **Validated**: a token issued by one pod is accepted by the others |
-| Live-sync WebSocket notifications are in-memory per pod | `service.sessionAffinity: ClientIP` by default; add cookie affinity on the ingress. Enable `config.push` (Bitwarden relay) for mobile push (pod-independent) |
+| Live-sync WebSocket notifications are in-memory per pod | Cookie stickiness on the ingress / gateway (examples under `ingress.annotations`). Service `sessionAffinity` is off by default: controllers route to the pod endpoints and ignore it, and a proxy going through the Service would pin all its traffic to one pod. Enable `config.push` (Bitwarden relay) for mobile push (pod-independent) |
 | Rate limits (login/admin) are per pod | Effective limit = limit × replicas |
 | Admin-panel settings (`config.json`) are read at pod start only | Drive configuration through values/env. `storage.s3.configFileInBucket: true` shares the file in S3 (then roll the Deployment after an admin change) |
 | Scheduled purge jobs run on every pod | Idempotent DB deletes, harmless |
@@ -470,7 +470,7 @@ Vaultwarden exposes no Prometheus endpoint. `metrics.enabled` + `metrics.podMoni
 | rustfs.storageclass.name | string | `""` |  |
 | service.annotations | object | `{}` |  |
 | service.port | int | `80` |  |
-| service.sessionAffinity | string | `"ClientIP"` |  |
+| service.sessionAffinity | string | `"None"` |  |
 | service.sessionAffinityTimeoutSeconds | int | `10800` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
