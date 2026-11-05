@@ -78,14 +78,3 @@ With Argo CD, pin `config.secrets.rsaPrivateKey` inline or use `config.existingS
 ## Configuration
 
 Architecture, storage modes, HA caveats, backup/restore procedures and the full values reference: [`chart/README.md`](chart/README.md).
-
-## Repository layout
-
-| Path | Content |
-|------|---------|
-| `chart/` | The Helm chart |
-| `chart/ci/` | Value scenarios rendered, linted and validated (kubeconform, CRDs included) in CI |
-| `.github/workflows/lint.yml` | `helm lint --strict` + kubeconform on every scenario + guard-rail checks |
-| `.github/workflows/build-image.yml` | Builds `vaultwarden-s3:<appVersion>-alpine` (upstream sources + Dockerfile.alpine, `--features …,s3`) for amd64/arm64 |
-| `.github/workflows/update-versions.yml` | Weekly PR bumping vaultwarden, restic, rclone and the RustFS chart |
-| `.github/workflows/release-helm.yml` | Publishes the chart to `oci://ghcr.io/maximewewer/charts` |
