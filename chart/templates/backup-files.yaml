@@ -1,6 +1,7 @@
 {{- if include "vaultwarden.backup.filesEnabled" . }}
 {{- $f := .Values.backup.files }}
 {{- $s3 := eq .Values.storage.mode "s3" }}
+{{- $sqlite := eq .Values.database.type "sqlite" }}
 # restic file backup: attachments, sends, icon cache (+ sqlite db, config.json).
 # The DB itself (cnpg) is backed up separately by the barman-cloud plugin.
 apiVersion: batch/v1
@@ -36,8 +37,39 @@ spec:
           securityContext:
             {{- include "vaultwarden.backup.podSecurityContext" . | nindent 12 }}
           {{- include "vaultwarden.backup.rwoAffinity" . | nindent 10 }}
-          {{- if $s3 }}
+          {{- if or $s3 $sqlite }}
           initContainers:
+          {{- end }}
+          {{- if $sqlite }}
+            # Consistent online copy of the live sqlite DB (`vaultwarden backup` =
+            # VACUUM INTO), moved to /snapshot. restic backs up that copy, never the
+            # live db.sqlite3 file (which could be caught mid-write).
+            - name: sqlite-snapshot
+              image: {{ include "vaultwarden.appImage" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  rm -f /data/db_2*.sqlite3
+                  /vaultwarden backup
+                  mv /data/db_2*.sqlite3 /snapshot/db.sqlite3
+                  ls -l /snapshot
+              env:
+                - name: DATA_FOLDER
+                  value: /data
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              resources:
+                {{- toYaml $f.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: snapshot
+                  mountPath: /snapshot
+                - name: tmp
+                  mountPath: /tmp
+          {{- end }}
+          {{- if $s3 }}
             # Snapshot the vaultwarden bucket to the scratch volume; restic then
             # backs it up like a filesystem (dedup + encryption + retention).
             - name: fetch-bucket
@@ -72,8 +104,8 @@ spec:
                   # Init the repository on first run (password errors are not masked:
                   # `cat config` fails, then `init` fails on the existing repo).
                   restic $RESTIC_OPTS cat config >/dev/null 2>&1 || restic $RESTIC_OPTS init
-                  restic $RESTIC_OPTS backup /data --host "$RESTIC_HOST" --tag vaultwarden \
-                    --exclude /data/tmp --one-file-system
+                  restic $RESTIC_OPTS backup /data{{ if $sqlite }} /snapshot{{ end }} --host "$RESTIC_HOST" --tag vaultwarden \
+                    --exclude /data/tmp{{ if $sqlite }} --exclude '/data/db.sqlite3*' --exclude '/data/db_*.sqlite3'{{ end }}
                   restic $RESTIC_OPTS forget --host "$RESTIC_HOST" --tag vaultwarden --prune \
                     --keep-daily {{ $f.keepDaily }} --keep-weekly {{ $f.keepWeekly }} --keep-monthly {{ $f.keepMonthly }}
                   {{- with $f.checkReadDataSubset }}
@@ -94,6 +126,11 @@ spec:
                   mountPath: /cache
                 - name: tmp
                   mountPath: /tmp
+                {{- if $sqlite }}
+                - name: snapshot
+                  mountPath: /snapshot
+                  readOnly: true
+                {{- end }}
           volumes:
             - name: data
               {{- if $s3 }}
@@ -107,4 +144,8 @@ spec:
               emptyDir: {}
             - name: tmp
               emptyDir: {}
+            {{- if $sqlite }}
+            - name: snapshot
+              emptyDir: {}
+            {{- end }}
 {{- end }}

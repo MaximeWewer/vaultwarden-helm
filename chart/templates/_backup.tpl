@@ -168,6 +168,13 @@ template:
             {{- if not $s3 }}
             # Copy entries (not the mount root itself: its owner/mode belong to the volume).
             for f in /restore/data/* /restore/data/.[!.]*; do if [ -e "$f" ]; then cp -a "$f" /data/; fi; done
+            {{- if eq .Values.database.type "sqlite" }}
+            # sqlite: the DB was backed up as a consistent copy in /snapshot.
+            if [ -f /restore/snapshot/db.sqlite3 ]; then
+              rm -f /data/db.sqlite3-wal /data/db.sqlite3-shm
+              cp /restore/snapshot/db.sqlite3 /data/db.sqlite3
+            fi
+            {{- end }}
             {{- end }}
             echo "restore done"
         env:

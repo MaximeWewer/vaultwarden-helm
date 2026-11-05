@@ -138,7 +138,7 @@ Both backups are **enabled by default** and share one S3 target (`backup.s3`). R
 | What | How | Default schedule | Retention |
 |------|-----|------------------|-----------|
 | PostgreSQL | barman-cloud plugin: WAL archiving (continuous) + base backup, `s3://<bucket>/cnpg/<cluster>/` | `0 0 2 * * *` | `30d` recovery window |
-| Files | restic, `s3:<endpoint>/<bucket>/restic`. `rwx`/`rwo`: PVC mounted read-only (`rwo`: pod pinned to the vaultwarden node). `s3`: rclone copies the bucket to a scratch volume first | `30 2 * * *` | 7 daily / 4 weekly / 6 monthly + `restic check --read-data-subset 5%` |
+| Files | restic, `s3:<endpoint>/<bucket>/restic`. `rwx`/`rwo`: PVC mounted read-only (`rwo`: pod pinned to the vaultwarden node). `s3`: rclone copies the bucket to a scratch volume first. `sqlite`: a consistent copy of the live DB (`vaultwarden backup`, i.e. `VACUUM INTO`) is taken first and backed up instead of the live file; the restore Job puts it back | `30 2 * * *` | 7 daily / 4 weekly / 6 monthly + `restic check --read-data-subset 5%` |
 | JWT key | Not in the backups: keep the chart Secret (or your `existingSecret`) in your secret store | n/a | n/a |
 
 The restic repository password is generated once into `<release>-vaultwarden-restic` (kept on uninstall). **Save it off-cluster**: without it the repository cannot be decrypted.
