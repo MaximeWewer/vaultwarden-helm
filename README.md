@@ -78,3 +78,7 @@ With Argo CD, pin `config.secrets.rsaPrivateKey` inline or use `config.existingS
 ## Configuration
 
 Architecture, storage modes, HA caveats, backup/restore procedures and the full values reference: [`chart/README.md`](chart/README.md).
+
+## License
+
+This chart is distributed under the [MIT License](LICENSE). Vaultwarden itself is licensed under the [AGPL-3.0](https://github.com/dani-garcia/vaultwarden/blob/main/LICENSE.txt); the `vaultwarden-s3` image built by this repository is a build of the unmodified upstream sources and stays under AGPL-3.0.
