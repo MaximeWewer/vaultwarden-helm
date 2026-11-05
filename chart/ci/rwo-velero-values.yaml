@@ -1,0 +1,10 @@
+config:
+  domain: https://vault.example.com
+storage:
+  mode: rwo
+replicas: 1
+backup:
+  database:
+    enabled: false
+  files:
+    enabled: false

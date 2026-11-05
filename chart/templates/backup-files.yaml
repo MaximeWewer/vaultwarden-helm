@@ -1,0 +1,110 @@
+{{- if include "vaultwarden.backup.filesEnabled" . }}
+{{- $f := .Values.backup.files }}
+{{- $s3 := eq .Values.storage.mode "s3" }}
+# restic file backup: attachments, sends, icon cache (+ sqlite db, config.json).
+# The DB itself (cnpg) is backed up separately by the barman-cloud plugin.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}-backup
+  labels:
+    app.kubernetes.io/component: backup
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  schedule: {{ $f.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ $f.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $f.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $f.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: backup
+            {{- include "vaultwarden.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "vaultwarden.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "vaultwarden.backup.podSecurityContext" . | nindent 12 }}
+          {{- include "vaultwarden.backup.rwoAffinity" . | nindent 10 }}
+          {{- if $s3 }}
+          initContainers:
+            # Snapshot the vaultwarden bucket to the scratch volume; restic then
+            # backs it up like a filesystem (dedup + encryption + retention).
+            - name: fetch-bucket
+              image: {{ include "vaultwarden.image" (dict "img" $f.rclone.image "root" .) | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - copy
+                - {{ printf "vw:%s" (include "vaultwarden.s3.basePath" .) | quote }}
+                - /data
+                - --fast-list
+                - --stats-one-line
+                - -v
+              env:
+                {{- include "vaultwarden.rclone.env" . | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              resources:
+                {{- toYaml $f.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
+          {{- end }}
+          containers:
+            - name: restic
+              image: {{ include "vaultwarden.image" (dict "img" $f.image "root" .) | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  # Init the repository on first run (password errors are not masked:
+                  # `cat config` fails, then `init` fails on the existing repo).
+                  restic $RESTIC_OPTS cat config >/dev/null 2>&1 || restic $RESTIC_OPTS init
+                  restic $RESTIC_OPTS backup /data --host "$RESTIC_HOST" --tag vaultwarden \
+                    --exclude /data/tmp --one-file-system
+                  restic $RESTIC_OPTS forget --host "$RESTIC_HOST" --tag vaultwarden --prune \
+                    --keep-daily {{ $f.keepDaily }} --keep-weekly {{ $f.keepWeekly }} --keep-monthly {{ $f.keepMonthly }}
+                  {{- with $f.checkReadDataSubset }}
+                  restic $RESTIC_OPTS check --read-data-subset={{ . }}
+                  {{- end }}
+                  restic $RESTIC_OPTS snapshots --host "$RESTIC_HOST" --latest 3
+              env:
+                {{- include "vaultwarden.restic.env" . | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              resources:
+                {{- toYaml $f.resources | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: cache
+                  mountPath: /cache
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: data
+              {{- if $s3 }}
+              emptyDir:
+                sizeLimit: {{ $f.rclone.scratchSizeLimit }}
+              {{- else }}
+              persistentVolumeClaim:
+                claimName: {{ include "vaultwarden.pvcName" . }}
+              {{- end }}
+            - name: cache
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
+{{- end }}

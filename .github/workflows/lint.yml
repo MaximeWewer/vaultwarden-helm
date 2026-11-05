@@ -1,0 +1,59 @@
+name: Lint chart
+
+on:
+  pull_request:
+    paths:
+      - chart/**
+      - .github/workflows/lint.yml
+  push:
+    branches: [main]
+    paths:
+      - chart/**
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Build dependencies
+        run: helm dependency build chart/
+
+      - name: helm lint (every ci/ scenario)
+        run: |
+          for f in chart/ci/*-values.yaml; do
+            echo "::group::lint $f"
+            helm lint chart/ --strict -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Render + kubeconform (every ci/ scenario, CRDs included)
+        run: |
+          for f in chart/ci/*-values.yaml; do
+            echo "::group::kubeconform $f"
+            helm template vw chart/ -f "$f" | kubeconform -strict -summary \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            echo "::endgroup::"
+          done
+
+      - name: Guard rails must fail
+        run: |
+          set +e
+          fail() { if helm template vw chart/ -f chart/ci/base-values.yaml "$@" >/dev/null 2>&1; then echo "expected failure: $*"; exit 1; fi; }
+          fail --set storage.mode=rwo
+          fail --set database.type=sqlite
+          fail --set storage.mode=s3
+          fail --set rustfs.enabled=true
+          fail --set config.domain=
+          fail --set backup.s3.bucket=
+          echo "all guard rails fail as expected"

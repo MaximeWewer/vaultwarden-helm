@@ -1,0 +1,71 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  # Vaultwarden pods only (CNPG / RustFS manage their own pods).
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Web vault / API / WebSocket from the declared sources (ingress controller,
+    # gateway). Empty allowedFrom = any pod in any namespace, web port only.
+    - from:
+        {{- with .Values.networkPolicy.allowedFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - namespaceSelector: {}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.containerPort }}
+  egress:
+    # DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # In-namespace deps: CNPG (5432), RustFS (9000).
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 9000
+    {{- if .Values.networkPolicy.allowInternetHttps }}
+    # Icons, push relay, SSO IdP, external S3: HTTPS to anything (SMTP below).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    {{- if .Values.config.smtp.host }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
+      ports:
+        - protocol: TCP
+          port: {{ .Values.config.smtp.port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

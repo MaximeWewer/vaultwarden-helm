@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" .Values.ingress.annotations) | nindent 2 }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- if include "vaultwarden.rustfs.routed" . }}
+          # Bundled RustFS, path-style S3 on the vault origin: presigned attachment /
+          # Send URLs (and vaultwarden's own S3 calls) go through here. The Host header
+          # is preserved, so SigV4 signatures stay valid.
+          - path: /{{ .Values.storage.s3.bucket }}/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vaultwarden.rustfs.host" . }}
+                port:
+                  number: 9000
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vaultwarden.fullname" . }}
+                port:
+                  name: http
+{{- end }}

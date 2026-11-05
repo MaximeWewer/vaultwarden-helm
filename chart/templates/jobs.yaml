@@ -1,0 +1,162 @@
+{{- if and (eq .Values.storage.mode "s3") (or .Values.storage.s3.createBucket .Values.rustfs.enabled) }}
+{{- $rc := .Values.backup.files.rclone.image }}
+# Creates the vaultwarden bucket (idempotent). Plain Job, not a hook, so it behaves
+# the same under Helm and Argo CD; its name hashes the target so a change re-runs it.
+# Vaultwarden may restart a few times until the bucket exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-bucket-%s" (include "vaultwarden.fullname" .) (printf "%s|%s" (include "vaultwarden.s3.internalEndpoint" .) .Values.storage.s3.bucket | sha256sum | trunc 8) | trunc 63 | trimSuffix "-" }}
+  labels:
+    app.kubernetes.io/component: bucket-init
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: bucket-init
+        {{- include "vaultwarden.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "vaultwarden.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "vaultwarden.backup.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: mkdir
+          image: {{ include "vaultwarden.image" (dict "img" $rc "root" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["mkdir", {{ printf "vw:%s" .Values.storage.s3.bucket | quote }}, "-v"]
+          env:
+            {{- include "vaultwarden.rclone.env" . | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+
+{{- if and (include "vaultwarden.backup.filesEnabled" .) .Values.backup.files.restore.enabled }}
+{{- $f := .Values.backup.files }}
+{{- $s3 := eq .Values.storage.mode "s3" }}
+---
+# One-shot restic restore. Scale vaultwarden to 0 first, disable afterwards.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-restore-%s" (include "vaultwarden.fullname" .) ($f.restore.snapshot | sha256sum | trunc 8) | trunc 63 | trimSuffix "-" }}
+  labels:
+    app.kubernetes.io/component: restore
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: restore
+        {{- include "vaultwarden.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "vaultwarden.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "vaultwarden.backup.podSecurityContext" . | nindent 8 }}
+      {{- /* No rwo pod affinity here: vaultwarden is scaled to 0, the volume is free. */}}
+      {{- if $s3 }}
+      initContainers:
+      {{- else }}
+      containers:
+      {{- end }}
+        - name: restic
+          image: {{ include "vaultwarden.image" (dict "img" $f.image "root" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              SNAP={{ $f.restore.snapshot | quote }}
+              if [ "$SNAP" = "latest" ]; then SNAP="latest --host $RESTIC_HOST"; fi
+              # Snapshots store absolute /data/... paths: restore to /restore/data.
+              restic $RESTIC_OPTS restore $SNAP --target /restore --verify
+              {{- if not $s3 }}
+              # Copy entries (not the mount root itself: its owner/mode belong to the volume).
+              for f in /restore/data/* /restore/data/.[!.]*; do if [ -e "$f" ]; then cp -a "$f" /data/; fi; done
+              {{- end }}
+              echo "restore done"
+          env:
+            {{- include "vaultwarden.restic.env" . | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml $f.resources | nindent 12 }}
+          volumeMounts:
+            - name: restore
+              mountPath: /restore
+            - name: cache
+              mountPath: /cache
+            - name: tmp
+              mountPath: /tmp
+            {{- if not $s3 }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+      {{- if $s3 }}
+      containers:
+        # Push the restored objects back into the vaultwarden bucket.
+        - name: push-bucket
+          image: {{ include "vaultwarden.image" (dict "img" $f.rclone.image "root" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - copy
+            - /restore/data
+            - {{ printf "vw:%s" (include "vaultwarden.s3.basePath" .) | quote }}
+            - --stats-one-line
+            - -v
+          env:
+            {{- include "vaultwarden.rclone.env" . | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml $f.resources | nindent 12 }}
+          volumeMounts:
+            - name: restore
+              mountPath: /restore
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
+      volumes:
+        - name: restore
+          emptyDir:
+            sizeLimit: {{ $f.rclone.scratchSizeLimit }}
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if not $s3 }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "vaultwarden.pvcName" . }}
+        {{- end }}
+{{- end }}

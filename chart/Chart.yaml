@@ -1,0 +1,24 @@
+apiVersion: v2
+name: vaultwarden
+description: "Vaultwarden (Bitwarden-compatible server): hardened, HA-capable Helm chart. PostgreSQL via CloudNativePG (PITR backups), RWX / S3 (external or bundled RustFS) / RWO storage, restic file backups"
+type: application
+version: 1.37.5-05-11-2026
+appVersion: "1.37.5"
+home: https://github.com/dani-garcia/vaultwarden
+sources:
+  - https://github.com/dani-garcia/vaultwarden
+  - https://github.com/MaximeWewer/vaultwarden-helm
+keywords:
+  - vaultwarden
+  - bitwarden
+  - password-manager
+  - security
+maintainers:
+  - name: Maxime Wewer
+annotations:
+  category: Security
+dependencies:
+  - name: rustfs
+    version: "1.0.*"
+    repository: "https://charts.rustfs.com"
+    condition: rustfs.enabled

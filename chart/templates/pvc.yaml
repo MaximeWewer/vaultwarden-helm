@@ -1,0 +1,26 @@
+{{- if and (ne .Values.storage.mode "s3") (not .Values.storage.persistence.existingClaim) }}
+{{- $p := .Values.storage.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vaultwarden.pvcName" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- $pa := deepCopy ($p.annotations | default dict) }}
+  {{- if $p.retain }}{{- $_ := set $pa "helm.sh/resource-policy" "keep" }}{{- end }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" $pa) | nindent 2 }}
+spec:
+  accessModes:
+    {{- if eq .Values.storage.mode "rwx" }}
+    - ReadWriteMany
+    {{- else }}
+    - ReadWriteOnce
+    {{- end }}
+  {{- with $p.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+{{- end }}

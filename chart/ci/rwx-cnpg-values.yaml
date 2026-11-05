@@ -1,0 +1,26 @@
+config:
+  domain: https://vault.example.com
+  admin:
+    enabled: true
+  smtp:
+    host: smtp.example.com
+    from: vault@example.com
+    username: vault
+  push:
+    enabled: true
+    installationId: 00000000-0000-0000-0000-000000000000
+backup:
+  s3:
+    endpoint: https://s3.backup.example.com
+    bucket: vw-backups
+    accessKeyId: test
+    secretAccessKey: test
+ingress:
+  enabled: true
+  className: nginx
+metrics:
+  enabled: true
+  podMonitor:
+    enabled: true
+autoscaling:
+  enabled: true

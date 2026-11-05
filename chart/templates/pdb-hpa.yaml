@@ -1,0 +1,41 @@
+{{- if and .Values.podDisruptionBudget.enabled (include "vaultwarden.multiPod" .) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.autoscaling.enabled (include "vaultwarden.multiPod" .) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "vaultwarden.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

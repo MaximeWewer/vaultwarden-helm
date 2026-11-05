@@ -1,0 +1,525 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# Labels / annotations added to every resource rendered by this chart (not to the
+# CNPG / RustFS pods, which their operator / sub-chart own). commonLabels also land
+# on the vaultwarden pods (never in selectors).
+commonLabels: {}
+commonAnnotations: {}
+
+image:
+  # Optional registry prefix (mirror / pull-through cache) applied to every image below.
+  registry: ""
+  # Official image, Alpine variant (static musl build, smaller), built WITHOUT the
+  # `s3` feature.
+  repository: vaultwarden/server
+  # Empty -> "<Chart.AppVersion>-alpine". Set it explicitly to pin another tag
+  # (e.g. "1.37.5" for the Debian variant).
+  tag: ""
+  digest: ""
+  # Image used instead of `repository` when storage.mode=s3. Same upstream sources
+  # and docker/Dockerfile.alpine, built with
+  # `--build-arg DB=sqlite,mysql,postgresql,enable_mimalloc,s3` by this repository's
+  # build-image workflow, tagged "<Chart.AppVersion>-alpine" like the official image.
+  s3Repository: ghcr.io/maximewewer/vaultwarden-s3
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+## Number of vaultwarden pods. >1 requires a shared data store
+## (storage.mode=rwx|s3) and a network database (database.type=cnpg|external).
+## Multi-replica caveats (upstream is single-process by design):
+##   - WebSocket live-sync notifications are in-memory per pod: a client only gets
+##     pushes for changes handled by the pod it is connected to. Enable
+##     service.sessionAffinity / ingress stickiness, and config.push for mobile.
+##   - Login/admin rate limits are per pod (effective limit x replicas).
+##   - The admin panel writes config.json per pod: drive config through values/env.
+##   - Scheduled jobs (purges) run on every pod; they are idempotent DB deletes.
+replicas: 3
+
+## Vaultwarden application config (env vars). Every other upstream variable can be
+## set through extraEnv / extraEnvFrom (see .env.template upstream).
+config:
+  # Public URL, REQUIRED (DOMAIN). e.g. https://vault.example.com
+  domain: ""
+  signupsAllowed: false
+  signupsVerify: true
+  # Comma-separated domains allowed to sign up even when signupsAllowed=false.
+  signupsDomainsWhitelist: ""
+  invitationsAllowed: true
+  invitationOrgName: "Vaultwarden"
+  showPasswordHint: false
+  # Default PBKDF2 iterations for new accounts.
+  passwordIterations: 600000
+  webVaultEnabled: true
+  # Organization event logs (+ purge after eventsDaysRetain days, empty = keep).
+  orgEventsEnabled: false
+  eventsDaysRetain: ""
+  # Header holding the real client IP (set by the ingress / LB).
+  ipHeader: "X-Real-IP"
+  logLevel: "info"
+  extendedLogging: true
+  timezone: "UTC"
+  # Max DB connections PER POD (total = replicas x this; keep under max_connections).
+  databaseMaxConns: 10
+  extraEnv: []
+  extraEnvFrom: []
+
+  # Existing Secret with keys: rsa-private-key (REQUIRED with replicas>1, PEM),
+  # admin-token (if admin.enabled), smtp-password, push-installation-key,
+  # sso-client-secret, database-url (database.type=external). If empty, the chart
+  # generates the Secret (<fullname>-secret).
+  existingSecret: ""
+  # Inline secrets. Per-key resolution: inline value > existing in-cluster Secret
+  # (lookup) > generated random (rsa-private-key, admin-token only).
+  # RECOMMENDED with ArgoCD: its `lookup` is unreliable during diff/sync, so an unset
+  # key re-rolls each sync -> a new RSA key logs every user out, a new admin token
+  # locks the admin panel. Set them inline (or use existingSecret) to pin them.
+  secrets:
+    # PEM RSA private key signing the JWTs. MUST be identical on every pod.
+    # Generate: openssl genrsa 2048
+    rsaPrivateKey: ""
+    # Prefer an Argon2 PHC string: `vaultwarden hash` or
+    # echo -n 'pw' | argon2 "$(openssl rand -base64 32)" -e -id -k 65540 -t 3 -p 4
+    adminToken: ""
+    smtpPassword: ""
+    pushInstallationKey: ""
+    ssoClientSecret: ""
+
+  ## Admin panel (/admin). Disabled by default: the token is only set when enabled.
+  admin:
+    enabled: false
+    # Rate limit on admin login (per pod).
+    ratelimitSeconds: 300
+    ratelimitMaxBurst: 3
+
+  ## SMTP (password from the chart Secret key smtp-password).
+  smtp:
+    host: ""
+    port: 587
+    # starttls | force_tls | off
+    security: "starttls"
+    from: ""
+    fromName: "Vaultwarden"
+    username: ""
+
+  ## Bitwarden push relay: mobile push notifications. Works across replicas (goes
+  ## through Bitwarden's relay, not the pod WebSocket). Get an id/key at
+  ## https://bitwarden.com/host (key in the Secret: push-installation-key).
+  push:
+    enabled: false
+    installationId: ""
+    # US: https://push.bitwarden.com / https://identity.bitwarden.com
+    # EU: https://api.bitwarden.eu    / https://identity.bitwarden.eu
+    relayUri: "https://push.bitwarden.com"
+    identityUri: "https://identity.bitwarden.com"
+
+  ## OpenID Connect SSO (client secret in the Secret: sso-client-secret).
+  sso:
+    enabled: false
+    only: false
+    authority: ""
+    clientId: ""
+    scopes: "email profile"
+    pkce: true
+    signupsMatchEmail: true
+
+## Database backend.
+##   cnpg     : PostgreSQL Cluster CR managed by CloudNativePG (operator + CRDs first).
+##   external : bring your own PostgreSQL/MySQL URL (externalDatabase).
+##   sqlite   : file on the data volume. Single replica only, dev/small installs.
+database:
+  type: cnpg
+
+## CloudNativePG Cluster (database.type=cnpg). The operator generates the app user
+## credentials in <cluster>-app (key `uri`), read by vaultwarden as DATABASE_URL.
+cnpg:
+  # Number of PostgreSQL instances (1 primary + n-1 streaming replicas, auto-failover).
+  instances: 3
+  # Empty = operator default image. e.g. ghcr.io/cloudnative-pg/postgresql:17.6-standard-trixie
+  imageName: ""
+  database: vaultwarden
+  owner: vaultwarden
+  storage:
+    size: 5Gi
+    storageClass: ""
+  walStorage:
+    enabled: false
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # postgresql.conf parameters.
+  parameters: {}
+  # Spread instances across nodes (CNPG native anti-affinity).
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  # Operator-managed PodDisruptionBudgets for the instances.
+  enablePDB: true
+  # Wait for the instances (unsupervised = automated switchover on primary updates).
+  primaryUpdateStrategy: unsupervised
+  # Recovery bootstrap: restore this cluster from a barman-cloud backup instead of
+  # initdb (disaster recovery / clone). The ObjectStore must already exist.
+  recovery:
+    enabled: false
+    # ObjectStore name holding the source backups (barmancloud.cnpg.io/v1).
+    objectStore: ""
+    # serverName of the source cluster in that store (its Cluster name by default).
+    serverName: ""
+    # Optional PITR target (RFC3339), e.g. "2026-11-05T08:00:00Z".
+    targetTime: ""
+
+## Bring-your-own database (database.type=external). Either a full URL inline
+## (stored in the chart Secret), or an existing Secret key holding it.
+## postgresql://user:pass@host:5432/vaultwarden?sslmode=require
+externalDatabase:
+  url: ""
+  existingSecret: ""
+  existingSecretKey: "database-url"
+
+## Where attachments, sends, icon cache (and sqlite) live.
+##   rwx : one ReadWriteMany PVC shared by all pods (NFS, CephFS, Longhorn RWX...).
+##   s3  : attachments/sends/config.json in an S3 bucket (external, or bundled RustFS
+##         with rustfs.enabled). Uses image.s3Repository. Pods are otherwise stateless.
+##   rwo : one ReadWriteOnce PVC -> forced single replica + Recreate strategy.
+storage:
+  mode: rwx
+  persistence:
+    existingClaim: ""
+    storageClass: ""
+    size: 5Gi
+    annotations: {}
+    # Keep the PVC on `helm uninstall` (helm.sh/resource-policy: keep).
+    retain: true
+  s3:
+    bucket: "vaultwarden"
+    # Key prefix inside the bucket (no leading/trailing slash).
+    prefix: ""
+    # Endpoint URL used by vaultwarden. MUST BE REACHABLE BY END USERS: with S3 storage,
+    # clients download attachments/Sends directly from presigned URLs on this endpoint
+    # (external S3: also allow your vault origin in the bucket CORS for the web vault).
+    # Empty: AWS S3, or with rustfs.enabled the vaultwarden public origin
+    # (config.domain): the Ingress/HTTPRoute then routes /<bucket>/ to RustFS
+    # (same-origin, no CORS; pods reach it through that public URL too).
+    endpoint: ""
+    region: "us-east-1"
+    # false = path-style (MinIO/RustFS/Ceph RGW). true = virtual-hosted (AWS).
+    virtualHostStyle: false
+    # S3 storage class on write. Upstream defaults to INTELLIGENT_TIERING (AWS only).
+    storageClass: "STANDARD"
+    # Store the admin-panel config.json in the bucket (shared by every pod; each pod
+    # still reads it at startup only -> roll the Deployment after an admin change).
+    configFileInBucket: false
+    # Secret holding the credentials (ignored when rustfs.enabled: the RustFS
+    # credentials Secret is used).
+    existingSecret: ""
+    accessKeyIdKey: "AWS_ACCESS_KEY_ID"
+    secretAccessKeyKey: "AWS_SECRET_ACCESS_KEY"
+    # Inline credentials (stored in <fullname>-s3). Prefer existingSecret.
+    accessKeyId: ""
+    secretAccessKey: ""
+    # Create the bucket with a Job (rclone mkdir, idempotent). Always on with RustFS.
+    createBucket: false
+    # Init container blocking vaultwarden until the bucket answers (in-cluster endpoint).
+    waitForBucket: true
+    # Generate the RustFS root credentials into the Secret named by
+    # rustfs.secret.existingSecret (generate-once). false = you provide that Secret.
+    rustfsCreateSecret: true
+
+## Bundled RustFS (S3-compatible) sub-chart: https://github.com/rustfs/rustfs/tree/main/helm/rustfs
+## Only when storage.mode=s3 and you have no external S3. Standalone by default;
+## set mode.distributed.enabled=true (+ replicaCount>=4) for an erasure-coded HA cluster.
+## Helm cannot template sub-chart values: names below are fixed on purpose.
+rustfs:
+  enabled: false
+  mode:
+    standalone:
+      enabled: true
+    distributed:
+      enabled: false
+  # Credentials Secret (keys RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY). Generated by this
+  # chart when storage.s3.rustfsCreateSecret=true. One release per namespace.
+  secret:
+    existingSecret: vaultwarden-rustfs-credentials
+  storageclass:
+    # Empty = cluster default StorageClass.
+    name: ""
+    dataStorageSize: 10Gi
+  config:
+    rustfs:
+      console_enable: "false"
+      obs_environment: "production"
+      # Log to stdout (no logs PVC).
+      obs_log_directory: ""
+  ingress:
+    enabled: false
+
+## Backups. One S3 target shared by the database (CNPG barman-cloud plugin: base
+## backups + continuous WAL archiving = PITR) and the files (restic). Both are ON by
+## default: rendering fails until backup.s3 is configured, or each is explicitly
+## disabled (e.g. backup.files.enabled=false when Velero snapshots the PVC).
+## Use an OFF-SITE bucket, not the bundled RustFS.
+backup:
+  s3:
+    # e.g. https://s3.eu-west-3.amazonaws.com, https://minio.backup.lan:9000
+    endpoint: ""
+    bucket: ""
+    region: "us-east-1"
+    # Path-style addressing (MinIO/RustFS/Ceph).
+    forcePathStyle: true
+    # Secret with the credentials. Empty: <fullname>-backup built from the inline values.
+    existingSecret: ""
+    accessKeyIdKey: "AWS_ACCESS_KEY_ID"
+    secretAccessKeyKey: "AWS_SECRET_ACCESS_KEY"
+    accessKeyId: ""
+    secretAccessKey: ""
+
+  ## PostgreSQL (database.type=cnpg): barman-cloud plugin ObjectStore + ScheduledBackup.
+  ## Requires the plugin-barman-cloud installed next to the CNPG operator.
+  database:
+    enabled: true
+    # Prefix in backup.s3.bucket -> s3://<bucket>/<path>/<cluster>/
+    path: "cnpg"
+    # 6-field cron (seconds first).
+    schedule: "0 0 2 * * *"
+    # Recovery window kept by the plugin (base backups + WALs).
+    retentionPolicy: "30d"
+    # Take a base backup right after the ScheduledBackup is created.
+    immediate: true
+    # Archive under this serverName instead of the Cluster name. Set a NEW value after
+    # a recovery into the same bucket (the plugin refuses a non-empty WAL archive).
+    serverName: ""
+    walCompression: gzip
+    dataCompression: gzip
+    # Extra env for the plugin sidecar (e.g. AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    # for some S3-compatible stores).
+    sidecarEnv: []
+
+  ## Files (attachments, sends, icon cache, sqlite): restic CronJob, encrypted +
+  ## deduplicated snapshots in s3:<endpoint>/<bucket>/<path>.
+  ##   rwx/rwo : mounts the data PVC read-only (rwo: scheduled on the vaultwarden node).
+  ##   s3      : rclone copies the vaultwarden bucket to a scratch volume, then restic.
+  files:
+    enabled: true
+    path: "restic"
+    schedule: "30 2 * * *"
+    # Repository password: inline > existing Secret (lookup) > generated.
+    # SAVE IT: without it the repository is unreadable.
+    password: ""
+    keepDaily: 7
+    keepWeekly: 4
+    keepMonthly: 6
+    # `restic check --read-data-subset` after each run (empty = skip).
+    checkReadDataSubset: "5%"
+    image:
+      repository: restic/restic
+      tag: "0.19.1"
+      digest: ""
+    rclone:
+      image:
+        repository: rclone/rclone
+        tag: "1.75.2"
+        digest: ""
+      # Scratch volume size limit for the bucket copy (storage.mode=s3).
+      scratchSizeLimit: 5Gi
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    backoffLimit: 2
+    # One-shot restore Job (rendered while enabled; its name hashes the snapshot so
+    # changing it re-runs). Restores into the data PVC, or back into the bucket
+    # (storage.mode=s3). Scale vaultwarden to 0 first for a consistent restore.
+    restore:
+      enabled: false
+      # restic snapshot id, or "latest" (latest of this release's host).
+      snapshot: "latest"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+
+## HTTP port the container listens on (ROCKET_PORT, unprivileged).
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+  # ClientIP keeps a client on one pod (WebSocket notifications stay coherent).
+  sessionAffinity: ClientIP
+  sessionAffinityTimeoutSeconds: 10800
+
+ingress:
+  enabled: false
+  className: ""
+  # Sticky sessions with replicas>1 (ingress-nginx example):
+  #   nginx.ingress.kubernetes.io/affinity: cookie
+  #   nginx.ingress.kubernetes.io/session-cookie-name: vw_affinity
+  #   nginx.ingress.kubernetes.io/proxy-body-size: 525m
+  annotations: {}
+  host: vault.example.com
+  tls: []
+
+## Gateway API HTTPRoute (alternative to the Ingress).
+httpRoute:
+  enabled: false
+  parentRefs: []
+  #  - name: main-gateway
+  #    namespace: gateway-system
+  #    sectionName: https
+  hostnames: []
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# Spread pods across nodes and zones. Rendered only when replicas > 1.
+topologySpread:
+  enabled: true
+  whenUnsatisfiable: ScheduleAnyway
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+podAnnotations: {}
+podLabels: {}
+
+# Pod DNS. e.g. dnsConfig: { options: [ { name: ndots, value: "2" } ] }
+dnsPolicy: ""
+dnsConfig: {}
+
+## Probes of the vaultwarden container (full Kubernetes probe objects; set one to
+## null/{} to drop it). readiness hits /alive, which also checks the DB, so a pod
+## that lost the DB leaves the Service; liveness is TCP only, so a DB outage does not
+## restart every pod. The startupProbe bounds the wait for the DB at boot
+## (DB_CONNECTION_RETRIES=0): periodSeconds x failureThreshold = 5 min.
+## Overrides are MERGED with these defaults: to switch a handler, null the old one,
+## e.g. probes.liveness: { tcpSocket: null, httpGet: { path: /alive, port: http } }.
+probes:
+  startup:
+    httpGet:
+      path: /alive
+      port: http
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 60
+  readiness:
+    httpGet:
+      path: /alive
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    tcpSocket:
+      port: http
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+## Extension points for the vaultwarden pod. Values go through `tpl` (strings or
+## YAML), so they may reference {{ include "vaultwarden.fullname" . }} etc.
+# Extra volumes / mounts on the vaultwarden container, e.g. a corporate CA bundle:
+#   extraVolumes:
+#     - name: corp-ca
+#       configMap:
+#         name: corp-ca-bundle
+#   extraVolumeMounts:
+#     - name: corp-ca
+#       mountPath: /etc/ssl/certs/corp-ca.crt
+#       subPath: ca.crt
+#       readOnly: true
+#   config.extraEnv: [{ name: SSL_CERT_FILE, value: /etc/ssl/certs/corp-ca.crt }]
+extraVolumes: []
+extraVolumeMounts: []
+# Init containers run after the chart's own (wait-for-s3).
+extraInitContainers: []
+# Sidecar containers (log shipper, proxy...). Give them a securityContext: the pod
+# runs non-root with a read-only root filesystem expectation.
+sidecars: []
+
+## Extra manifests rendered with the release (ExternalSecret, NetworkPolicy,
+## ConfigMap...). Each entry: a map or a string, rendered through `tpl`.
+extraObjects: []
+#  - apiVersion: external-secrets.io/v1
+#    kind: ExternalSecret
+#    metadata:
+#      name: "{{ include \"vaultwarden.fullname\" . }}-secret"
+#    spec:
+#      secretStoreRef: { kind: ClusterSecretStore, name: vault }
+#      target: { name: vaultwarden-secret }
+#      dataFrom:
+#        - extract: { key: vaultwarden }
+
+podDisruptionBudget:
+  # Rendered only when the effective replica count is > 1.
+  enabled: true
+  maxUnavailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+## The image runs as root by default; the chart runs it as an unprivileged uid with
+## a read-only root filesystem (writes only to /data and the tmp emptyDir).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+networkPolicy:
+  enabled: true
+  # Peers allowed to reach the web port (ingress controller / gateway namespace).
+  # Empty = any pod in any namespace.
+  allowedFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ingress-nginx
+  # Vaultwarden fetches website icons, sends mail, talks to the push relay / SSO IdP /
+  # external S3+DB: open them here. Default allows HTTPS egress to anything outside
+  # the cluster pod network (set false to lock down and list destinations instead).
+  allowInternetHttps: true
+  extraEgress: []
+
+## Prometheus. Vaultwarden itself exposes no /metrics endpoint; what is scrapeable:
+##   - CNPG instances (postgres exporter built in, port 9187) via a PodMonitor.
+##   - RustFS exports OTLP (rustfs.config.rustfs.obs_endpoint), not Prometheus.
+metrics:
+  enabled: false
+  podMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+    # kube-prometheus-stack: { release: kube-prometheus-stack }
+    labels: {}

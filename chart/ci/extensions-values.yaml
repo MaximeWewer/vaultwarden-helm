@@ -1,0 +1,69 @@
+config:
+  domain: https://vault.example.com
+  extraEnv:
+    - name: SSL_CERT_FILE
+      value: /etc/ssl/certs/corp-ca.crt
+storage:
+  mode: s3
+rustfs:
+  enabled: true
+backup:
+  s3:
+    endpoint: https://s3.backup.example.com
+    bucket: vw-backups
+    accessKeyId: test
+    secretAccessKey: test
+ingress:
+  enabled: true
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 525m
+commonLabels:
+  team: security
+commonAnnotations:
+  owner: secops
+dnsConfig:
+  options:
+    - name: ndots
+      value: "2"
+probes:
+  liveness:
+    tcpSocket:
+      port: http
+    periodSeconds: 30
+    failureThreshold: 10
+  startup: null
+extraVolumes:
+  - name: corp-ca
+    configMap:
+      name: '{{ include "vaultwarden.fullname" . }}-ca'
+extraVolumeMounts:
+  - name: corp-ca
+    mountPath: /etc/ssl/certs/corp-ca.crt
+    subPath: ca.crt
+    readOnly: true
+extraInitContainers:
+  - name: hello
+    image: busybox:1.37
+    command: ["true"]
+sidecars:
+  - name: log-shipper
+    image: fluent/fluent-bit:4.1
+    securityContext:
+      runAsNonRoot: true
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities: { drop: [ALL] }
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: '{{ include "vaultwarden.fullname" . }}-ca'
+    data:
+      ca.crt: dummy
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .Release.Name }}-string-object
+    data:
+      ns: {{ .Release.Namespace }}

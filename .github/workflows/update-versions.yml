@@ -1,0 +1,108 @@
+name: Update Versions
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  update-versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+          curl -sSLo helm-docs.tar.gz https://github.com/norwoodj/helm-docs/releases/download/v1.14.2/helm-docs_1.14.2_Linux_x86_64.tar.gz
+          tar -xf helm-docs.tar.gz helm-docs
+          sudo mv helm-docs /usr/local/bin/helm-docs
+
+      - name: Get latest upstream versions
+        id: up
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest() { gh api "repos/$1/releases/latest" --jq .tag_name; }
+          VW=$(latest dani-garcia/vaultwarden)
+          RESTIC=$(latest restic/restic); RESTIC=${RESTIC#v}
+          RCLONE=$(latest rclone/rclone); RCLONE=${RCLONE#v}
+          echo "vaultwarden=${VW}" >> $GITHUB_OUTPUT
+          echo "restic=${RESTIC}" >> $GITHUB_OUTPUT
+          echo "rclone=${RCLONE}" >> $GITHUB_OUTPUT
+          echo "vaultwarden: ${VW} | restic: ${RESTIC} | rclone: ${RCLONE}"
+
+      - name: Get latest dependency chart versions
+        id: deps
+        run: |
+          # RustFS chart: track major.minor, let patch releases float.
+          helm repo add rustfs https://charts.rustfs.com >/dev/null
+          RUSTFS=$(helm show chart rustfs/rustfs 2>/dev/null | grep '^version:' | awk '{print $2}' | tr -d '"' || true)
+          if [ -n "$RUSTFS" ]; then
+            echo "rustfs=$(echo "$RUSTFS" | sed 's/\.[0-9]*$/.*/')" >> $GITHUB_OUTPUT
+          else
+            echo "rustfs=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Chart.yaml / values.yaml
+        run: |
+          VW="${{ steps.up.outputs.vaultwarden }}"
+          RUSTFS="${{ steps.deps.outputs.rustfs }}"
+          sed -i "s/^appVersion: .*/appVersion: \"${VW}\"/" chart/Chart.yaml
+          if [ -n "$RUSTFS" ]; then
+            sed -i "/name: rustfs/{n;s/version: .*/version: \"${RUSTFS}\"/}" chart/Chart.yaml
+          fi
+          sed -i "\#repository: restic/restic#{n;s/tag: .*/tag: \"${{ steps.up.outputs.restic }}\"/}" chart/values.yaml
+          sed -i "\#repository: rclone/rclone#{n;s/tag: .*/tag: \"${{ steps.up.outputs.rclone }}\"/}" chart/values.yaml
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            git diff --stat
+          fi
+
+      - name: Align chart version with vaultwarden
+        if: steps.changes.outputs.changed == 'true'
+        id: bump
+        run: |
+          BASE="${{ steps.up.outputs.vaultwarden }}"
+          NEW_VERSION="${BASE#v}-$(date -u +'%d-%m-%Y')"
+          sed -i "s/^version: .*/version: ${NEW_VERSION}/" chart/Chart.yaml
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Regenerate chart README
+        if: steps.changes.outputs.changed == 'true'
+        run: helm-docs --chart-search-root chart
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update versions to vaultwarden ${{ steps.up.outputs.vaultwarden }}"
+          title: "chore: update versions to vaultwarden ${{ steps.up.outputs.vaultwarden }}"
+          body: |
+            ## Automated version update
+
+            | Component | Version |
+            |-----------|---------|
+            | vaultwarden (appVersion) | `${{ steps.up.outputs.vaultwarden }}` |
+            | restic | `${{ steps.up.outputs.restic }}` |
+            | rclone | `${{ steps.up.outputs.rclone }}` |
+            | rustfs chart | `${{ steps.deps.outputs.rustfs }}` |
+            | Chart version | `${{ steps.bump.outputs.version }}` |
+
+            Merging rebuilds `vaultwarden-s3:${{ steps.up.outputs.vaultwarden }}` (build-image workflow) and releases the chart.
+          branch: chore/update-versions
+          delete-branch: true

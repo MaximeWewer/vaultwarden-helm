@@ -1,0 +1,7 @@
+{{- /* Arbitrary extra manifests (ExternalSecret, NetworkPolicy, ConfigMap...).
+       Each entry is a map or a string; both go through `tpl`, so they can use
+       {{ include "vaultwarden.fullname" . }}, .Release.Namespace, etc. */}}
+{{- range .Values.extraObjects }}
+---
+{{ include "vaultwarden.tplValue" (dict "value" . "root" $) }}
+{{- end }}

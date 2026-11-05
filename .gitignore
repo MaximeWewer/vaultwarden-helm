@@ -1,0 +1,5 @@
+
+# Helm dependency build artifacts
+*.tgz
+chart/charts/
+chart/Chart.lock

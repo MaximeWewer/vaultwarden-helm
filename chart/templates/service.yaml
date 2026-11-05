@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultwarden.fullname" . }}
+  labels:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" .Values.service.annotations) | nindent 2 }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if and .Values.service.sessionAffinity (ne .Values.service.sessionAffinity "None") }}
+  # Keeps a client on one pod so its WebSocket sees the changes it makes.
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: {{ .Values.service.sessionAffinityTimeoutSeconds }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: server
+    {{- include "vaultwarden.selectorLabels" . | nindent 4 }}

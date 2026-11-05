@@ -1,0 +1,23 @@
+config:
+  domain: https://vault.example.com
+storage:
+  mode: s3
+rustfs:
+  enabled: true
+replicas: 3
+backup:
+  s3:
+    endpoint: https://s3.backup.example.com
+    bucket: vw-backups
+    accessKeyId: test
+    secretAccessKey: test
+  files:
+    restore:
+      enabled: true
+ingress:
+  enabled: true
+  className: nginx
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: gw

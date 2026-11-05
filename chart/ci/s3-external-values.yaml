@@ -1,0 +1,19 @@
+config:
+  domain: https://vault.example.com
+storage:
+  mode: s3
+  s3:
+    endpoint: https://minio.example.com
+    bucket: vaultwarden
+    prefix: prod
+    existingSecret: vw-s3
+database:
+  type: external
+externalDatabase:
+  existingSecret: vw-db
+backup:
+  database:
+    enabled: false
+  s3:
+    bucket: vw-backups
+    existingSecret: vw-backup

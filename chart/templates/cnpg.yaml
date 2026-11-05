@@ -1,0 +1,167 @@
+{{- if eq .Values.database.type "cnpg" }}
+{{- $c := .Values.cnpg }}
+{{- $name := include "vaultwarden.cnpg.fullname" . }}
+{{- $backup := include "vaultwarden.backup.dbEnabled" . }}
+# PostgreSQL managed by CloudNativePG (operator + CRDs MUST be installed first).
+# The operator creates the app user and its Secret <cluster>-app (key `uri`), read
+# by vaultwarden as DATABASE_URL. Services: <cluster>-rw (primary), -ro, -r.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: database
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  instances: {{ $c.instances }}
+  {{- with $c.imageName }}
+  imageName: {{ . | quote }}
+  {{- end }}
+  primaryUpdateStrategy: {{ $c.primaryUpdateStrategy }}
+  enablePDB: {{ $c.enablePDB }}
+  enableSuperuserAccess: false
+  {{- with $c.parameters }}
+  postgresql:
+    parameters:
+      {{- range $k, $v := . }}
+      {{ $k }}: {{ $v | quote }}
+      {{- end }}
+  {{- end }}
+  bootstrap:
+    {{- if $c.recovery.enabled }}
+    # Disaster recovery: restore from a barman-cloud ObjectStore (optionally PITR).
+    recovery:
+      source: origin
+      database: {{ $c.database }}
+      owner: {{ $c.owner }}
+      {{- with $c.recovery.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+    {{- else }}
+    initdb:
+      database: {{ $c.database }}
+      owner: {{ $c.owner }}
+    {{- end }}
+  {{- if $c.recovery.enabled }}
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ $c.recovery.objectStore }}
+          serverName: {{ $c.recovery.serverName | default $name }}
+  {{- end }}
+  {{- if $backup }}
+  # Continuous WAL archiving + base backups through the barman-cloud plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "vaultwarden.cnpg.objectStore" . }}
+        {{- with .Values.backup.database.serverName }}
+        # Archive under a new serverName (required after a recovery into the same store).
+        serverName: {{ . }}
+        {{- end }}
+  {{- end }}
+  storage:
+    size: {{ $c.storage.size | quote }}
+    {{- with $c.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  {{- if $c.walStorage.enabled }}
+  walStorage:
+    size: {{ $c.walStorage.size | quote }}
+    {{- with $c.walStorage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  resources:
+    {{- toYaml $c.resources | nindent 4 }}
+  affinity:
+    {{- toYaml $c.affinity | nindent 4 }}
+{{- if $backup }}
+{{- $b := .Values.backup }}
+---
+# barman-cloud plugin object store (plugin installed next to the CNPG operator).
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "vaultwarden.cnpg.objectStore" . }}
+  labels:
+    app.kubernetes.io/component: database
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  retentionPolicy: {{ $b.database.retentionPolicy | quote }}
+  configuration:
+    destinationPath: {{ printf "s3://%s/%s" $b.s3.bucket ($b.database.path | trimAll "/") | quote }}
+    {{- with $b.s3.endpoint }}
+    endpointURL: {{ . | trimSuffix "/" | quote }}
+    {{- end }}
+    s3Credentials:
+      accessKeyId:
+        name: {{ include "vaultwarden.backup.secretName" . }}
+        key: {{ include "vaultwarden.backup.accessKeyKey" . }}
+      secretAccessKey:
+        name: {{ include "vaultwarden.backup.secretName" . }}
+        key: {{ include "vaultwarden.backup.secretKeyKey" . }}
+    wal:
+      compression: {{ $b.database.walCompression }}
+    data:
+      compression: {{ $b.database.dataCompression }}
+  instanceSidecarConfiguration:
+    env:
+      - name: AWS_DEFAULT_REGION
+        value: {{ $b.s3.region | quote }}
+      {{- with $b.database.sidecarEnv }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: database
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  schedule: {{ $b.database.schedule | quote }}
+  immediate: {{ $b.database.immediate }}
+  backupOwnerReference: self
+  cluster:
+    name: {{ $name }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+{{- end }}
+{{- if and .Values.metrics.enabled .Values.metrics.podMonitor.enabled }}
+{{- $pm := .Values.metrics.podMonitor }}
+---
+# CNPG instances expose postgres metrics on :9187 (port name `metrics`).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $name }}
+  namespace: {{ $pm.namespace | default .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: database
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+    {{- with $pm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      cnpg.io/cluster: {{ $name }}
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ $pm.interval }}
+{{- end }}
+{{- end }}

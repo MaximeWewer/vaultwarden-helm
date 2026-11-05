@@ -1,0 +1,66 @@
+Vaultwarden deployed: {{ include "vaultwarden.fullname" . }} ({{ include "vaultwarden.appImage" . }})
+
+Topology:
+  - replicas : {{ if and .Values.autoscaling.enabled (include "vaultwarden.multiPod" .) }}HPA {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ include "vaultwarden.replicas" . }}{{ end }}{{ if and (gt (int .Values.replicas) 1) (eq (include "vaultwarden.replicas" .) "1") }} (forced to 1: storage.mode={{ .Values.storage.mode }} / database.type={{ .Values.database.type }}){{ end }}
+  - storage  : {{ .Values.storage.mode }}{{ if eq .Values.storage.mode "s3" }} -> bucket {{ include "vaultwarden.s3.basePath" . }} @ {{ include "vaultwarden.s3.endpoint" . | default "AWS S3" }}{{ if .Values.rustfs.enabled }} (bundled RustFS){{ end }}{{ else }} -> PVC {{ include "vaultwarden.pvcName" . }}{{ end }}
+{{- if eq .Values.storage.mode "s3" }}
+    Clients download attachments/Sends from presigned URLs on that endpoint: it must be
+    reachable from browsers/mobile apps{{ if not .Values.rustfs.enabled }} and allow your vault origin in the bucket CORS{{ end }}.
+{{- if and (include "vaultwarden.rustfs.routed" .) (not .Values.ingress.enabled) (not .Values.httpRoute.enabled) }}
+    WARNING: neither ingress nor httpRoute is enabled: route {{ include "vaultwarden.domainOrigin" . }}/{{ .Values.storage.s3.bucket }}/
+    to svc/{{ include "vaultwarden.rustfs.host" . }}:9000 in your own proxy, or attachments will not load.
+{{- end }}
+{{- end }}
+  - database : {{ .Values.database.type }}{{ if eq .Values.database.type "cnpg" }} -> Cluster/{{ include "vaultwarden.cnpg.fullname" . }} ({{ .Values.cnpg.instances }} instances){{ end }}
+{{- if eq .Values.database.type "cnpg" }}
+    WARNING: the CloudNativePG operator + CRDs must be installed BEFORE this chart
+    {{- if include "vaultwarden.backup.dbEnabled" . }}, and the barman-cloud plugin next to it{{ end }}.
+{{- end }}
+
+Backups:
+{{- if include "vaultwarden.backup.dbEnabled" . }}
+  - database : barman-cloud -> s3://{{ .Values.backup.s3.bucket }}/{{ .Values.backup.database.path }} (WAL + base "{{ .Values.backup.database.schedule }}", retention {{ .Values.backup.database.retentionPolicy }})
+    kubectl get backups.postgresql.cnpg.io -n {{ .Release.Namespace }}
+{{- else if eq .Values.database.type "cnpg" }}
+  - database : DISABLED (backup.database.enabled=false): make sure something else covers it.
+{{- else if eq .Values.database.type "external" }}
+  - database : external, back it up on its side.
+{{- end }}
+{{- if include "vaultwarden.backup.filesEnabled" . }}
+  - files    : restic -> {{ include "vaultwarden.backup.resticRepo" . }} ("{{ .Values.backup.files.schedule }}")
+    Repository password (SAVE IT OFF-CLUSTER, the repo is unreadable without it):
+      kubectl get secret -n {{ .Release.Namespace }} {{ include "vaultwarden.fullname" . }}-restic -o jsonpath='{.data.RESTIC_PASSWORD}' | base64 -d
+    Run one now:
+      kubectl create job -n {{ .Release.Namespace }} --from=cronjob/{{ include "vaultwarden.fullname" . }}-backup {{ include "vaultwarden.fullname" . }}-backup-manual
+{{- else }}
+  - files    : DISABLED (backup.files.enabled=false): ensure Velero/snapshots cover {{ if eq .Values.storage.mode "s3" }}the bucket{{ else }}PVC {{ include "vaultwarden.pvcName" . }}{{ end }}.
+{{- end }}
+  - JWT key  : Secret {{ include "vaultwarden.secretName" . }} (key rsa-private-key). Back it up too:
+    a restore with a different key only logs users out (no data loss), but keep it.
+
+Access:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}
+{{- else if .Values.httpRoute.enabled }}
+  {{ .Values.config.domain }} (HTTPRoute)
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "vaultwarden.fullname" . }} 8080:{{ .Values.service.port }}
+  then http://localhost:8080 (web crypto needs https or localhost)
+{{- end }}
+{{- if .Values.config.admin.enabled }}
+
+Admin panel: {{ .Values.config.domain | trimSuffix "/" }}/admin
+  token: kubectl get secret -n {{ .Release.Namespace }} {{ include "vaultwarden.secretName" . }} -o jsonpath='{.data.admin-token}' | base64 -d
+{{- end }}
+{{- if include "vaultwarden.multiPod" . }}
+
+Multi-replica reminders:
+  - Live-sync WebSockets are per pod: keep sticky sessions (service.sessionAffinity,
+    ingress cookie affinity) and enable config.push for mobile clients.
+  - Drive configuration through values/env: admin-panel changes are read at pod start.
+{{- end }}
+{{- if not .Values.config.signupsAllowed }}
+
+Sign-ups are closed: invite users from the admin panel or an organization,
+or allow config.signupsDomainsWhitelist.
+{{- end }}

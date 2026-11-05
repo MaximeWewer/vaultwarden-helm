@@ -1,0 +1,20 @@
+config:
+  domain: http://localhost:8080
+storage:
+  mode: rwo
+replicas: 1
+database:
+  type: sqlite
+backup:
+  database:
+    enabled: false
+  s3:
+    endpoint: https://s3.backup.example.com
+    bucket: vw-backups
+    accessKeyId: test
+    secretAccessKey: test
+  files:
+    restore:
+      enabled: true
+networkPolicy:
+  enabled: false
