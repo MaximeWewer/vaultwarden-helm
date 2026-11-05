@@ -242,9 +242,39 @@ extraObjects:
 - `/admin` disabled unless `config.admin.enabled`; sign-ups closed by default.
 - `rsa-private-key`, restic password and RustFS credentials Secrets carry `helm.sh/resource-policy: keep`.
 
+## Metrics and audit events (vaultwarden-exporter)
+
+`exporter.enabled: true` deploys [vaultwarden-exporter](https://github.com/MaximeWewer/vaultwarden-exporter), which reads the Vaultwarden database **read-only** and:
+
+- exposes **Prometheus metrics** on `:9776` (`exporter.serviceMonitor.enabled` for a ServiceMonitor): accounts, two-factor adoption per method, users without 2FA, logins stuck at the second factor, organizations and members, vault items by type, attachments and their size, Sends, devices, emergency access, audit event counters;
+- streams the **audit events** as one JSON line each on **stdout** (`"kind":"audit_event"`, logs on stderr), for the log pipeline already collecting your container logs (fluent-bit, Vector, Alloy...): logins, failed logins, wrong 2FA codes, vault exports, items viewed / copied, membership and policy changes, enriched with user, actor and member emails, organization names, device types.
+
+```json
+{"source":"vaultwarden","kind":"audit_event","timestamp":"2026-11-05T13:39:31.007116Z","event_type":1006,"event_name":"UserFailedLogIn2fa","org_name":"Acme Corp","user_email":"alice@acme.test","actor_email":"alice@acme.test","device_name":"FirefoxBrowser","ip":"192.0.2.77","labels":{"cluster":"prod"}}
+```
+
+| Piece | Detail |
+|-------|--------|
+| Database access | `cnpg`: a CNPG managed login role (`exporter.database.role`, password generated once) and a Job granting it column-level `SELECT` as the application owner ([`files/exporter-grants.sql`](files/exporter-grants.sql), the grants the exporter CI tests): no password hashes, keys or vault data. `external`: `exporter.database.existingSecret`, the URL of a read-only role with the same grants. `sqlite`: the data PVC is mounted with the vaultwarden uid (WAL needs the `-shm` file), pinned to the vaultwarden node on RWO |
+| Events | Single replica (one reader). Cursor + late-arrival window + dedup by event id, saved in `configmap/<release>-vaultwarden-exporter-state`, created by the exporter (RBAC: `create` configmaps, `get`/`patch` on that name), so `helm upgrade` and Argo CD never reset it; kept on uninstall. At-least-once: deduplicate on `event_id` downstream. Enabling the events forces `ORG_EVENTS_ENABLED=true` |
+| Filters | `exporter.events.include` / `exclude` (event names), `orgCopies: none` drops the per-organization copies of user events, `labels` adds static fields |
+| NetworkPolicy | Scrape port from `exporter.allowedFrom` (empty = any namespace); egress DNS, the database, the Kubernetes API (cursor) |
+
+Alerting rules and a Grafana dashboard ship with the exporter: [`deployments/prometheus/vaultwarden-alerts.yml`](https://github.com/MaximeWewer/vaultwarden-exporter/blob/main/deployments/prometheus/vaultwarden-alerts.yml), [`grafana/vaultwarden.json`](https://github.com/MaximeWewer/vaultwarden-exporter/blob/main/grafana/vaultwarden.json).
+
+```yaml
+exporter:
+  enabled: true
+  events:
+    labels: { cluster: prod }
+  serviceMonitor:
+    enabled: true
+    labels: { release: kube-prometheus-stack }
+```
+
 ## Metrics
 
-Vaultwarden exposes no Prometheus endpoint. `metrics.enabled` + `metrics.podMonitor.enabled` create a `PodMonitor` for the CNPG instances (built-in exporter on `:9187`). RustFS exports OTLP (`rustfs.config.rustfs.obs_endpoint`).
+Vaultwarden itself exposes no Prometheus endpoint: its data comes from the exporter above. `metrics.enabled` + `metrics.podMonitor.enabled` create a `PodMonitor` for the CNPG instances (built-in exporter on `:9187`). RustFS exports OTLP (`rustfs.config.rustfs.obs_endpoint`).
 
 ## Main values
 
@@ -265,6 +295,7 @@ Vaultwarden exposes no Prometheus endpoint. `metrics.enabled` + `metrics.podMoni
 | `config.smtp.*` / `config.push.*` / `config.sso.*` | off | Mail, mobile push relay, OIDC |
 | `ingress.*` / `httpRoute.*` | off | Exposure (Ingress or Gateway API) |
 | `networkPolicy.enabled` | `true` | NetworkPolicy |
+| `exporter.enabled` | `false` | Prometheus metrics + audit event stream (vaultwarden-exporter) |
 
 ## Requirements
 
@@ -398,6 +429,33 @@ Vaultwarden exposes no Prometheus endpoint. `metrics.enabled` + `metrics.podMoni
 | database.type | string | `"cnpg"` |  |
 | dnsConfig | object | `{}` |  |
 | dnsPolicy | string | `""` |  |
+| exporter.allowedFrom | list | `[]` |  |
+| exporter.database.existingSecret | string | `""` |  |
+| exporter.database.existingSecretKey | string | `"url"` |  |
+| exporter.database.role | string | `"vw_exporter"` |  |
+| exporter.enabled | bool | `false` |  |
+| exporter.events.batchSize | int | `500` |  |
+| exporter.events.enabled | bool | `true` |  |
+| exporter.events.exclude | list | `[]` |  |
+| exporter.events.include | list | `[]` |  |
+| exporter.events.labels | object | `{}` |  |
+| exporter.events.lateWindow | string | `"1h"` |  |
+| exporter.events.orgCopies | string | `"all"` |  |
+| exporter.events.pollInterval | string | `"30s"` |  |
+| exporter.events.startFrom | string | `"now"` |  |
+| exporter.image.digest | string | `""` |  |
+| exporter.image.repository | string | `"ghcr.io/maximewewer/vaultwarden-exporter"` |  |
+| exporter.image.tag | string | `"2026.11.1"` |  |
+| exporter.logLevel | string | `"info"` |  |
+| exporter.metrics.enabled | bool | `true` |  |
+| exporter.metrics.refreshInterval | string | `"60s"` |  |
+| exporter.resources.limits.memory | string | `"128Mi"` |  |
+| exporter.resources.requests.cpu | string | `"10m"` |  |
+| exporter.resources.requests.memory | string | `"32Mi"` |  |
+| exporter.serviceMonitor.enabled | bool | `false` |  |
+| exporter.serviceMonitor.interval | string | `"60s"` |  |
+| exporter.serviceMonitor.labels | object | `{}` |  |
+| exporter.serviceMonitor.namespace | string | `""` |  |
 | externalDatabase.existingSecret | string | `""` |  |
 | externalDatabase.existingSecretKey | string | `"database-url"` |  |
 | externalDatabase.networkPolicyPeers | list | `[]` |  |

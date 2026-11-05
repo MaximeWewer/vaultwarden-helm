@@ -1,0 +1,379 @@
+{{- if include "vaultwarden.exporter.enabled" . }}
+{{- $x := .Values.exporter }}
+{{- $name := include "vaultwarden.exporter.fullname" . }}
+{{- $db := .Values.database.type }}
+{{- if eq $db "cnpg" }}
+{{- $sname := printf "%s-db" $name }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $sname }}
+{{- $pw := include "vaultwarden.resolve" (dict "inline" "" "existing" $existing "key" "password") | default (randAlphaNum 40) }}
+# Password of the read-only exporter role. CNPG reconciles the role from it
+# (cnpg.yaml: spec.managed.roles). Generate-once, kept on uninstall.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $sname }}
+  labels:
+    app.kubernetes.io/component: exporter
+    cnpg.io/reload: "true"
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" (dict "helm.sh/resource-policy" "keep")) | nindent 2 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ $x.database.role | quote }}
+  password: {{ $pw | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-grants
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+data:
+  grants.sql: |
+    {{- .Files.Get "files/exporter-grants.sql" | nindent 4 }}
+---
+{{- $spec := include "vaultwarden.exporter.grantsJob.spec" . }}
+# Column-level SELECT grants for the exporter role, as the application owner.
+# Retries until Vaultwarden has created its tables and CNPG the role. The name
+# hashes the spec (and the SQL), so a change runs a new Job (see jobs.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-grants-%s" $name (printf "%s%s" $spec (.Files.Get "files/exporter-grants.sql") | sha256sum | trunc 8) | trunc 63 | trimSuffix "-" }}
+  labels:
+    app.kubernetes.io/component: exporter-grants
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  {{- $spec | nindent 2 }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+automountServiceAccountToken: false
+---
+# The event cursor ConfigMap is created by the exporter at runtime (not by Helm,
+# so upgrades and Argo CD syncs never reset it): create in the namespace,
+# get/patch on that name only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ printf "%s-state" $name | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  # One reader of the event stream: two would print every event twice
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: exporter
+      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: exporter
+        {{- include "vaultwarden.selectorLabels" . | nindent 8 }}
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      # Token used only to save the event cursor ConfigMap (Role limited to it)
+      automountServiceAccountToken: {{ $x.events.enabled }}
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        # Same uid as vaultwarden: with sqlite, the reader needs the -shm file
+        {{- include "vaultwarden.backup.podSecurityContext" . | nindent 8 }}
+      {{- if and (eq $db "sqlite") (eq .Values.storage.mode "rwo") }}
+      # RWO volume: run on the node of vaultwarden
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: server
+                  {{- include "vaultwarden.selectorLabels" . | nindent 18 }}
+      {{- end }}
+      containers:
+        - name: exporter
+          image: {{ include "vaultwarden.image" (dict "img" $x.image "root" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- if eq $db "cnpg" }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-db
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-db
+                  key: password
+            - name: VAULTWARDEN_EXPORTER_DATABASE_URL
+              value: {{ printf "postgresql://$(PGUSER):$(PGPASSWORD)@%s-rw:5432/%s?sslmode=require" (include "vaultwarden.cnpg.fullname" .) .Values.cnpg.database | quote }}
+            {{- else if eq $db "external" }}
+            - name: VAULTWARDEN_EXPORTER_DATABASE_URL_FILE
+              value: /etc/vaultwarden-exporter/db/url
+            {{- else }}
+            - name: VAULTWARDEN_EXPORTER_DATABASE_URL
+              value: sqlite:///data/db.sqlite3
+            {{- end }}
+            - name: VAULTWARDEN_EXPORTER_LOG_LEVEL
+              value: {{ $x.logLevel | quote }}
+            - name: VAULTWARDEN_EXPORTER_METRICS_ENABLED
+              value: {{ $x.metrics.enabled | quote }}
+            - name: VAULTWARDEN_EXPORTER_METRICS_REFRESH_INTERVAL
+              value: {{ $x.metrics.refreshInterval | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_ENABLED
+              value: {{ $x.events.enabled | quote }}
+            {{- if $x.events.enabled }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_POLL_INTERVAL
+              value: {{ $x.events.pollInterval | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_BATCH_SIZE
+              value: {{ $x.events.batchSize | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_LATE_WINDOW
+              value: {{ $x.events.lateWindow | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_START_FROM
+              value: {{ $x.events.startFrom | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_STATE_BACKEND
+              value: kubernetes
+            - name: VAULTWARDEN_EXPORTER_EVENTS_STATE_CONFIGMAP
+              value: {{ printf "%s-state" $name | quote }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_ORG_COPIES
+              value: {{ $x.events.orgCopies | quote }}
+            {{- with $x.events.labels }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_LABELS
+              value: {{ include "vaultwarden.exporter.labelsEnv" . | quote }}
+            {{- end }}
+            {{- with $x.events.include }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_INCLUDE
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with $x.events.exclude }}
+            - name: VAULTWARDEN_EXPORTER_EVENTS_EXCLUDE
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: 9776
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 30
+            failureThreshold: 5
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml $x.resources | nindent 12 }}
+          {{- if or (eq $db "external") (eq $db "sqlite") }}
+          volumeMounts:
+            {{- if eq $db "external" }}
+            - name: db-url
+              mountPath: /etc/vaultwarden-exporter/db
+              readOnly: true
+            {{- else }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+          {{- end }}
+      {{- if or (eq $db "external") (eq $db "sqlite") }}
+      volumes:
+        {{- if eq $db "external" }}
+        - name: db-url
+          secret:
+            secretName: {{ $x.database.existingSecret }}
+            items:
+              - key: {{ $x.database.existingSecretKey }}
+                path: url
+        {{- else }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "vaultwarden.pvcName" . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9776
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.selectorLabels" . | nindent 4 }}
+{{- if $x.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  namespace: {{ $x.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+    {{- with $x.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: exporter
+      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ $x.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Exporter: scrape port in; DNS, database and Kubernetes API (cursor) out
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: exporter
+    {{- include "vaultwarden.labels" . | nindent 4 }}
+  {{- include "vaultwarden.annotations" (dict "root" . "extra" dict) | nindent 2 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: exporter
+      {{- include "vaultwarden.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- with $x.allowedFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - namespaceSelector: {}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9776
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if eq $db "cnpg" }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "vaultwarden.cnpg.fullname" . }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- else if eq $db "external" }}
+    - to:
+        {{- with .Values.externalDatabase.networkPolicyPeers }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.externalDatabase.port }}
+    {{- end }}
+    {{- if $x.events.enabled }}
+    # Kubernetes API server (event cursor ConfigMap): host network, 443 or 6443
+    - to:
+        {{- include "vaultwarden.netpol.anywhere" . | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    {{- end }}
+{{- end }}
+{{- end }}

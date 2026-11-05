@@ -1,0 +1,19 @@
+config:
+  domain: https://vault.example.com
+backup:
+  s3:
+    endpoint: https://s3.backup.example.com
+    bucket: vw-backups
+    accessKeyId: test
+    secretAccessKey: test
+exporter:
+  enabled: true
+  events:
+    labels:
+      cluster: prod
+      env: eu
+    exclude: [CipherClientViewed]
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack

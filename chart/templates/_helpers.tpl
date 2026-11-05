@@ -297,6 +297,20 @@ true
 {{- if and .Values.config.push.enabled (not .Values.config.push.installationId) -}}
 {{- fail "config.push.enabled needs config.push.installationId (+ push-installation-key secret)" -}}
 {{- end -}}
+{{- if .Values.exporter.enabled -}}
+{{- if and (not .Values.exporter.metrics.enabled) (not .Values.exporter.events.enabled) -}}
+{{- fail "exporter.enabled needs exporter.metrics.enabled and/or exporter.events.enabled" -}}
+{{- end -}}
+{{- if and (eq $db "external") (not .Values.exporter.database.existingSecret) -}}
+{{- fail "exporter with database.type=external needs exporter.database.existingSecret (URL of a read-only role)" -}}
+{{- end -}}
+{{- if not (has .Values.exporter.events.startFrom (list "now" "beginning")) -}}
+{{- fail "exporter.events.startFrom must be now or beginning" -}}
+{{- end -}}
+{{- if and .Values.exporter.events.include .Values.exporter.events.exclude -}}
+{{- fail "exporter.events.include and exporter.events.exclude are mutually exclusive" -}}
+{{- end -}}
+{{- end -}}
 {{- end }}
 
 {{- /*
@@ -355,4 +369,14 @@ true
      chart itself, so a `helm upgrade` cannot bring it back mid-restore). */}}
 {{- define "vaultwarden.restoring" -}}
 {{- if and .Values.backup.files.enabled .Values.backup.files.restore.enabled -}}true{{- end -}}
+{{- end }}
+
+{{/* ---------- vaultwarden-exporter ---------- */}}
+{{- define "vaultwarden.exporter.fullname" -}}{{ printf "%s-exporter" (include "vaultwarden.fullname" .) }}{{- end }}
+{{- define "vaultwarden.exporter.enabled" -}}
+{{- if .Values.exporter.enabled -}}true{{- end -}}
+{{- end }}
+{{/* Audit events streamed: forces ORG_EVENTS_ENABLED */}}
+{{- define "vaultwarden.exporter.events" -}}
+{{- if and .Values.exporter.enabled .Values.exporter.events.enabled -}}true{{- end -}}
 {{- end }}

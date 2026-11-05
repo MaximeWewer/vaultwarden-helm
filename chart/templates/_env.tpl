@@ -86,7 +86,8 @@
 - name: PASSWORD_ITERATIONS
   value: {{ $c.passwordIterations | quote }}
 - name: ORG_EVENTS_ENABLED
-  value: {{ $c.orgEventsEnabled | quote }}
+  # Forced on by exporter.events.enabled (Vaultwarden records no event otherwise)
+  value: {{ or $c.orgEventsEnabled (include "vaultwarden.exporter.events" .) | quote }}
 {{- with $c.eventsDaysRetain }}
 - name: EVENTS_DAYS_RETAIN
   value: {{ . | quote }}

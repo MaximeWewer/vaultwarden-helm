@@ -34,9 +34,11 @@ jobs:
           VW=$(latest dani-garcia/vaultwarden)
           RESTIC=$(latest restic/restic); RESTIC=${RESTIC#v}
           RCLONE=$(latest rclone/rclone); RCLONE=${RCLONE#v}
+          EXPORTER=$(latest MaximeWewer/vaultwarden-exporter); EXPORTER=${EXPORTER#v}
           echo "vaultwarden=${VW}" >> $GITHUB_OUTPUT
           echo "restic=${RESTIC}" >> $GITHUB_OUTPUT
           echo "rclone=${RCLONE}" >> $GITHUB_OUTPUT
+          echo "exporter=${EXPORTER}" >> $GITHUB_OUTPUT
           echo "vaultwarden: ${VW} | restic: ${RESTIC} | rclone: ${RCLONE}"
 
       - name: Get latest dependency chart versions
@@ -61,6 +63,7 @@ jobs:
           fi
           sed -i "\#repository: restic/restic#{n;s/tag: .*/tag: \"${{ steps.up.outputs.restic }}\"/}" chart/values.yaml
           sed -i "\#repository: rclone/rclone#{n;s/tag: .*/tag: \"${{ steps.up.outputs.rclone }}\"/}" chart/values.yaml
+          sed -i "\#repository: ghcr.io/maximewewer/vaultwarden-exporter#{n;s/tag: .*/tag: \"${{ steps.up.outputs.exporter }}\"/}" chart/values.yaml
 
       - name: Check for changes
         id: changes
@@ -100,6 +103,7 @@ jobs:
             | vaultwarden (appVersion) | `${{ steps.up.outputs.vaultwarden }}` |
             | restic | `${{ steps.up.outputs.restic }}` |
             | rclone | `${{ steps.up.outputs.rclone }}` |
+            | vaultwarden-exporter | `${{ steps.up.outputs.exporter }}` |
             | rustfs chart | `${{ steps.deps.outputs.rustfs }}` |
             | Chart version | `${{ steps.bump.outputs.version }}` |
 

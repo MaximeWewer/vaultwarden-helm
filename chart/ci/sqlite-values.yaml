@@ -18,3 +18,7 @@ backup:
       enabled: true
 networkPolicy:
   enabled: false
+exporter:
+  enabled: true
+  events:
+    orgCopies: none

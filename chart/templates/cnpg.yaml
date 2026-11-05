@@ -21,6 +21,16 @@ spec:
   primaryUpdateStrategy: {{ $c.primaryUpdateStrategy }}
   enablePDB: {{ $c.enablePDB }}
   enableSuperuserAccess: false
+  {{- if include "vaultwarden.exporter.enabled" . }}
+  # Read-only login role of vaultwarden-exporter (grants: exporter.yaml Job)
+  managed:
+    roles:
+      - name: {{ .Values.exporter.database.role }}
+        ensure: present
+        login: true
+        passwordSecret:
+          name: {{ include "vaultwarden.exporter.fullname" . }}-db
+  {{- end }}
   {{- with $c.parameters }}
   postgresql:
     parameters:

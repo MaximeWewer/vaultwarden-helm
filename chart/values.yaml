@@ -545,7 +545,72 @@ networkPolicy:
   allowInternetHttps: true
   extraEgress: []
 
+## vaultwarden-exporter (https://github.com/MaximeWewer/vaultwarden-exporter): reads
+## the Vaultwarden database read-only and
+##   - exposes Prometheus metrics (accounts, 2FA adoption, organizations, members,
+##     vault items, attachments, sends, devices, audit event counters) on :9776;
+##   - streams the audit events (logins, failed logins, wrong 2FA codes, vault
+##     exports, items viewed / copied, membership and policy changes...) as JSON
+##     lines on stdout, for your log pipeline / SIEM.
+## Database access, per database.type:
+##   cnpg     : a CNPG managed login role (exporter.database.role) + a Job granting
+##              it column-level SELECT (files/exporter-grants.sql), as the app owner.
+##   external : exporter.database.existingSecret, URL of a read-only role (GRANTs:
+##              https://github.com/MaximeWewer/vaultwarden-exporter/tree/main/deployments/sql).
+##   sqlite   : the data PVC is mounted (same uid as vaultwarden: WAL needs the -shm file).
+## Enabling the events forces ORG_EVENTS_ENABLED=true (Vaultwarden records nothing otherwise).
+exporter:
+  enabled: false
+  image:
+    repository: ghcr.io/maximewewer/vaultwarden-exporter
+    tag: "2026.11.1"
+    digest: ""
+  logLevel: info
+  metrics:
+    enabled: true
+    # Database queries period (scrapes read a snapshot, never the database)
+    refreshInterval: 60s
+  events:
+    enabled: true
+    pollInterval: 30s
+    batchSize: 500
+    # Re-read window for events uploaded late by the clients (item viewed, copied...)
+    lateWindow: 1h
+    # First start only (no cursor saved yet): now or beginning
+    startFrom: now
+    # Static fields added to every event, e.g. { cluster: prod }
+    labels: {}
+    # Event names to keep / drop (mutually exclusive), e.g. [UserLoggedIn, UserFailedLogIn]
+    include: []
+    exclude: []
+    # all: keep the per-organization copies of user events; none: only the copy
+    # without organization (a login is stored once + once per organization)
+    orgCopies: all
+  database:
+    # cnpg: name of the managed read-only login role
+    role: vw_exporter
+    # external: Secret holding the URL of a read-only role (postgresql:// or mysql://)
+    existingSecret: ""
+    existingSecretKey: url
+  # The event cursor is kept in the ConfigMap <fullname>-exporter-state, created by
+  # the exporter at runtime (never reset by helm upgrade / Argo CD; kept on uninstall)
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  # NetworkPolicy peers allowed to scrape :9776. Empty = any pod in any namespace.
+  allowedFrom: []
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 60s
+    # kube-prometheus-stack: { release: kube-prometheus-stack }
+    labels: {}
+
 ## Prometheus. Vaultwarden itself exposes no /metrics endpoint; what is scrapeable:
+##   - Vaultwarden data and audit events: the exporter above (exporter.serviceMonitor).
 ##   - CNPG instances (postgres exporter built in, port 9187) via a PodMonitor.
 ##   - RustFS exports OTLP (rustfs.config.rustfs.obs_endpoint), not Prometheus.
 metrics:

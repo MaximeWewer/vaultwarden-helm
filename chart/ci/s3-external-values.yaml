@@ -17,3 +17,7 @@ backup:
   s3:
     bucket: vw-backups
     existingSecret: vw-backup
+exporter:
+  enabled: true
+  database:
+    existingSecret: vw-exporter-db

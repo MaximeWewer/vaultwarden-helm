@@ -44,6 +44,18 @@ Backups:
   - JWT key  : Secret {{ include "vaultwarden.secretName" . }} (key rsa-private-key). Back it up too:
     a restore with a different key only logs users out (no data loss), but keep it.
 
+{{- if include "vaultwarden.exporter.enabled" . }}
+Exporter: deploy/{{ include "vaultwarden.exporter.fullname" . }} ({{ .Values.exporter.image.repository }}:{{ .Values.exporter.image.tag }})
+{{- if .Values.exporter.metrics.enabled }}
+  - metrics: svc/{{ include "vaultwarden.exporter.fullname" . }}:9776/metrics{{ if .Values.exporter.serviceMonitor.enabled }} (ServiceMonitor){{ end }}
+{{- end }}
+{{- if .Values.exporter.events.enabled }}
+  - audit events, one JSON line each ("kind":"audit_event") on stdout:
+      kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "vaultwarden.exporter.fullname" . }} -f
+    ORG_EVENTS_ENABLED is forced on. Cursor: configmap/{{ include "vaultwarden.exporter.fullname" . }}-state (kept on uninstall).
+{{- end }}
+
+{{ end -}}
 Access:
 {{- if .Values.ingress.enabled }}
   https://{{ .Values.ingress.host }}
