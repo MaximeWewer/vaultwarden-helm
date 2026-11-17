@@ -329,7 +329,7 @@ backup:
     rclone:
       image:
         repository: rclone/rclone
-        tag: "1.75.2"
+        tag: "1.76.0"
         digest: ""
       # Scratch volume size limit for the bucket copy (storage.mode=s3).
       scratchSizeLimit: 5Gi
@@ -563,7 +563,7 @@ exporter:
   enabled: false
   image:
     repository: ghcr.io/maximewewer/vaultwarden-exporter
-    tag: "2026.11.1"
+    tag: "2026.11.2"
     digest: ""
   logLevel: info
   metrics:
