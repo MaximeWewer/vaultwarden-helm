@@ -335,7 +335,7 @@ Vaultwarden itself exposes no Prometheus endpoint: its data comes from the expor
 | backup.files.path | string | `"restic"` |  |
 | backup.files.rclone.image.digest | string | `""` |  |
 | backup.files.rclone.image.repository | string | `"rclone/rclone"` |  |
-| backup.files.rclone.image.tag | string | `"1.75.2"` |  |
+| backup.files.rclone.image.tag | string | `"1.76.0"` |  |
 | backup.files.rclone.scratchSizeLimit | string | `"5Gi"` |  |
 | backup.files.resources.limits.memory | string | `"512Mi"` |  |
 | backup.files.resources.requests.cpu | string | `"50m"` |  |
@@ -445,7 +445,7 @@ Vaultwarden itself exposes no Prometheus endpoint: its data comes from the expor
 | exporter.events.startFrom | string | `"now"` |  |
 | exporter.image.digest | string | `""` |  |
 | exporter.image.repository | string | `"ghcr.io/maximewewer/vaultwarden-exporter"` |  |
-| exporter.image.tag | string | `"2026.11.1"` |  |
+| exporter.image.tag | string | `"2026.11.2"` |  |
 | exporter.logLevel | string | `"info"` |  |
 | exporter.metrics.enabled | bool | `true` |  |
 | exporter.metrics.refreshInterval | string | `"60s"` |  |
