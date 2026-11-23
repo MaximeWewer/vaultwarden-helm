@@ -327,7 +327,7 @@ Vaultwarden itself exposes no Prometheus endpoint: its data comes from the expor
 | backup.files.failedJobsHistoryLimit | int | `3` |  |
 | backup.files.image.digest | string | `""` |  |
 | backup.files.image.repository | string | `"restic/restic"` |  |
-| backup.files.image.tag | string | `"0.19.1"` |  |
+| backup.files.image.tag | string | `"0.20.0"` |  |
 | backup.files.keepDaily | int | `7` |  |
 | backup.files.keepMonthly | int | `6` |  |
 | backup.files.keepWeekly | int | `4` |  |
